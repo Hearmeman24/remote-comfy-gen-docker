@@ -1,0 +1,19 @@
+# Maps ComfyUI model types to the network volume paths.
+# The Docker image bakes ComfyUI + custom nodes at /ComfyUI,
+# but models live on the persistent network volume at /runpod-volume.
+network_volume:
+    base_path: /runpod-volume/ComfyUI/models
+    checkpoints: checkpoints
+    clip: clip
+    clip_vision: clip_vision
+    controlnet: controlnet
+    diffusion_models: diffusion_models
+    embeddings: embeddings
+    loras: loras
+    style_models: style_models
+    text_encoders: text_encoders
+    unet: unet
+    upscale_models: upscale_models
+    latent_upscale_models: latent_upscale_models
+    detection: detection
+    vae: vae

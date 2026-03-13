@@ -1,0 +1,96 @@
+# .circleci/config.yml  (CircleCI 2.1)
+version: 2.1
+
+executors:
+  docker-dind:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: false
+    environment:
+      DOCKER_BUILDKIT: 1
+      COMPOSE_DOCKER_CLI_BUILD: 1
+
+commands:
+  notify-flowbot:
+    description: Send a webhook notification to FlowBot
+    parameters:
+      message:
+        type: string
+    steps:
+      - run:
+          name: Notify FlowBot
+          when: always
+          command: |
+            if [ -z "$FLOWBOT_WEBHOOK_URL" ] || [ -z "$FLOWBOT_WEBHOOK_TOKEN" ]; then
+              echo "Missing webhook env vars, skipping notification."
+              exit 0
+            fi
+            curl -s -X POST "${FLOWBOT_WEBHOOK_URL}/hooks/agent" \
+              -H "Authorization: Bearer ${FLOWBOT_WEBHOOK_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"message\": \"<< parameters.message >>\", \"source\": \"circleci\"}"
+
+jobs:
+  build_and_push:
+    executor: docker-dind
+    steps:
+      - checkout
+
+      - run:
+          name: Log in to Docker Hub
+          command: |
+            echo "$DOCKERHUB_PAT" | docker login -u "$DOCKERHUB_USER" --password-stdin
+
+      - run:
+          name: Get commit info
+          command: |
+            echo "export COMMIT_MSG=\"$(git log -1 --pretty=%s | tr '"' "'" )\"" >> "$BASH_ENV"
+
+      - notify-flowbot:
+          message: "Tell me that the comfyui-serverless:${CIRCLE_TAG:-latest} Docker build has started. Commit ${CIRCLE_SHA1:0:7}: ${COMMIT_MSG}"
+
+      - run:
+          name: Build & push ComfyUI serverless image
+          command: |
+            TAG="${CIRCLE_TAG:-latest}"
+            IMG="docker.io/$DOCKERHUB_USER/comfyui-serverless"
+
+            docker build \
+              --progress=plain \
+              -t "${IMG}:${TAG}" .
+            docker push "${IMG}:${TAG}"
+            touch /tmp/build_success
+
+      - run:
+          name: Notify FlowBot — build complete
+          when: always
+          command: |
+            TAG="${CIRCLE_TAG:-latest}"
+            if [ -z "$FLOWBOT_WEBHOOK_URL" ] || [ -z "$FLOWBOT_WEBHOOK_TOKEN" ]; then
+              echo "Missing webhook env vars, skipping notification."
+              exit 0
+            fi
+            WEBHOOK="${FLOWBOT_WEBHOOK_URL}/hooks/agent"
+            if [ -f /tmp/build_success ]; then
+              MSG="Tell me that the comfyui-serverless:${TAG} Docker build succeeded and was pushed to Docker Hub. Commit ${CIRCLE_SHA1:0:7}: ${COMMIT_MSG}"
+            else
+              MSG="Tell me that the comfyui-serverless:${TAG} Docker build failed. Commit ${CIRCLE_SHA1:0:7}: ${COMMIT_MSG}. Logs: ${CIRCLE_BUILD_URL}"
+            fi
+            curl -s -X POST "${WEBHOOK}" \
+              -H "Authorization: Bearer ${FLOWBOT_WEBHOOK_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"message\": \"${MSG}\", \"source\": \"circleci\"}"
+
+workflows:
+  version: 2
+  build_on_tag:
+    jobs:
+      - build_and_push:
+          context:
+            - docker-hub
+            - flowbot-webhook-token
+          filters:
+            tags:
+              only: /^v.*$/
+            branches:
+              ignore: /.*/
