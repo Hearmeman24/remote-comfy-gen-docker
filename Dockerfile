@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+FROM nvidia/cuda:13.0.1-devel-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -19,24 +19,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV PATH="/opt/venv/bin:$PATH"
 
-# ComfyUI + all deps (includes torch, safetensors, transformers, etc.)
-# Keep ComfyUI in /ComfyUI (baked into image) for fast cold starts
+# ComfyUI + all deps
+# Install PyTorch with cu130 first, then ComfyUI requirements (skips torch reinstall)
+# cu130 enables comfy-kitchen's optimized CUDA/triton backends for fp8/nvfp4/mxfp8
 RUN pip install --upgrade pip setuptools wheel packaging && \
+    pip install torch torchvision torchaudio \
+        --extra-index-url https://download.pytorch.org/whl/cu130 && \
     git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git /ComfyUI && \
     pip install -r /ComfyUI/requirements.txt
-
-# Upgrade PyTorch to cu130 for comfy-kitchen optimized CUDA/triton backends
-# (fp8, nvfp4, mxfp8 quantization + rope kernels)
-RUN pip install torch torchvision torchaudio \
-    --extra-index-url https://download.pytorch.org/whl/cu130
 
 # Freeze torch versions to prevent custom node deps from upgrading/downgrading
 RUN pip freeze | grep -E "^(torch|torchvision|torchaudio|torchsde)==" > /torch-constraint.txt
 
-# SageAttention (pre-built wheel)
+# SageAttention (pre-built wheel, may fail on cu130 — non-fatal)
 COPY sageattention-2.2.0-cp312-cp312-linux_x86_64.whl /tmp/
-RUN pip install /tmp/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl && \
-    rm /tmp/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl
+RUN pip install /tmp/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl || \
+    echo "WARNING: SageAttention wheel incompatible, skipping"; \
+    rm -f /tmp/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl
 
 # RunPod SDK + runtime deps
 RUN pip install runpod boto3 requests websocket-client
@@ -90,12 +89,13 @@ RUN for repo in \
 
 # Verify key imports (fail fast if something is broken)
 RUN python3 -c "\
-import torch; print(f'PyTorch {torch.__version__}'); \
+import torch; print(f'PyTorch {torch.__version__}, CUDA {torch.version.cuda}'); \
 import safetensors; print(f'safetensors {safetensors.__version__}'); \
 import transformers; print(f'transformers {transformers.__version__}'); \
 import kornia; print('kornia OK'); \
 import spandrel; print('spandrel OK'); \
-import sageattention; print('sageattention OK'); \
+try: import sageattention; print('sageattention OK')
+except ImportError: print('sageattention not available (cu130 incompatible wheel)')
 "
 
 # CivitAI downloader (uses aria2c which is already installed above)
