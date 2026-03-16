@@ -25,6 +25,11 @@ RUN pip install --upgrade pip setuptools wheel packaging && \
     git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git /ComfyUI && \
     pip install -r /ComfyUI/requirements.txt
 
+# Upgrade PyTorch to cu130 for comfy-kitchen optimized CUDA/triton backends
+# (fp8, nvfp4, mxfp8 quantization + rope kernels)
+RUN pip install torch torchvision torchaudio \
+    --extra-index-url https://download.pytorch.org/whl/cu130
+
 # Freeze torch versions to prevent custom node deps from upgrading/downgrading
 RUN pip freeze | grep -E "^(torch|torchvision|torchaudio|torchsde)==" > /torch-constraint.txt
 
