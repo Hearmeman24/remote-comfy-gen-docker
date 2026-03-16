@@ -31,6 +31,9 @@ RUN pip install --upgrade pip setuptools wheel packaging && \
 # Freeze torch versions to prevent custom node deps from upgrading/downgrading
 RUN pip freeze | grep -E "^(torch|torchvision|torchaudio|torchsde)==" > /torch-constraint.txt
 
+# FlashAttention (pre-built wheel for cu130 + torch 2.9 + cp312)
+RUN pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu130torch2.9-cp312-cp312-linux_x86_64.whl
+
 # RunPod SDK + runtime deps
 RUN pip install runpod boto3 requests websocket-client
 
@@ -88,6 +91,7 @@ import safetensors; print(f'safetensors {safetensors.__version__}'); \
 import transformers; print(f'transformers {transformers.__version__}'); \
 import kornia; print('kornia OK'); \
 import spandrel; print('spandrel OK'); \
+import flash_attn; print(f'flash_attn {flash_attn.__version__}'); \
 "
 
 # CivitAI downloader (uses aria2c which is already installed above)
