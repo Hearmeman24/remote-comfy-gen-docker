@@ -23,7 +23,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Install PyTorch with cu130 first, then ComfyUI requirements (skips torch reinstall)
 # cu130 enables comfy-kitchen's optimized CUDA/triton backends for fp8/nvfp4/mxfp8
 RUN pip install --upgrade pip setuptools wheel packaging && \
-    pip install torch torchvision torchaudio \
+    pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 \
         --extra-index-url https://download.pytorch.org/whl/cu130 && \
     git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git /ComfyUI && \
     pip install -r /ComfyUI/requirements.txt
