@@ -31,12 +31,6 @@ RUN pip install --upgrade pip setuptools wheel packaging && \
 # Freeze torch versions to prevent custom node deps from upgrading/downgrading
 RUN pip freeze | grep -E "^(torch|torchvision|torchaudio|torchsde)==" > /torch-constraint.txt
 
-# SageAttention (pre-built wheel, may fail on cu130 — non-fatal)
-COPY sageattention-2.2.0-cp312-cp312-linux_x86_64.whl /tmp/
-RUN pip install /tmp/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl || \
-    echo "WARNING: SageAttention wheel incompatible, skipping"; \
-    rm -f /tmp/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl
-
 # RunPod SDK + runtime deps
 RUN pip install runpod boto3 requests websocket-client
 
@@ -94,8 +88,6 @@ import safetensors; print(f'safetensors {safetensors.__version__}'); \
 import transformers; print(f'transformers {transformers.__version__}'); \
 import kornia; print('kornia OK'); \
 import spandrel; print('spandrel OK'); \
-try: import sageattention; print('sageattention OK')
-except ImportError: print('sageattention not available (cu130 incompatible wheel)')
 "
 
 # CivitAI downloader (uses aria2c which is already installed above)
