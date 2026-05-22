@@ -4,3 +4,5 @@ __pycache__/
 .DS_Store
 *.egg-info/
 *.whl
+# SageAttention wheel needs to be in the build context — track it explicitly.
+!sageattention-*.whl
