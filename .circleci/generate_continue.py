@@ -204,21 +204,26 @@ workflows:
     jobs:
       - build_and_push:
           context: [docker-hub, flowbot-webhook-token]
+          filters: {{ tags: {{ only: /^v.*$/ }}, branches: {{ ignore: /.*/ }} }}
       - update_endpoint:
           context: [docker-hub]
           requires: [build_and_push]
+          filters: {{ tags: {{ only: /^v.*$/ }}, branches: {{ ignore: /.*/ }} }}
       - wait_for_rollout:
           context: [docker-hub]
           requires: [update_endpoint]
+          filters: {{ tags: {{ only: /^v.*$/ }}, branches: {{ ignore: /.*/ }} }}
       - smoke_test:
           context: [docker-hub]
           requires: [wait_for_rollout]
           matrix:
             parameters:
               preset_id: {presets_yaml}
+          filters: {{ tags: {{ only: /^v.*$/ }}, branches: {{ ignore: /.*/ }} }}
       - notify_done:
           context: [flowbot-webhook-token]
           requires: [smoke_test]
+          filters: {{ tags: {{ only: /^v.*$/ }}, branches: {{ ignore: /.*/ }} }}
 """
 
 
