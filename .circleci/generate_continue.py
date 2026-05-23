@@ -208,7 +208,10 @@ jobs:
           name: Run smoke for preset << parameters.preset_id >>
           no_output_timeout: 60m
           command: |
+            # Fetch smoke_preset.py + its sibling validate_workflow.py
+            # (smoke_preset.py imports validate_workflow from its parent dir).
             curl -sSL "https://raw.githubusercontent.com/Hearmeman24/ComfyGen/main/automation/smoke_preset.py" -o /tmp/smoke_preset.py
+            curl -sSL "https://raw.githubusercontent.com/Hearmeman24/ComfyGen/main/automation/validate_workflow.py" -o /tmp/validate_workflow.py
             python3 /tmp/smoke_preset.py "<< parameters.preset_id >>" --endpoint-id {ENDPOINT_ID} --workflow-timeout 2700
 
   notify_done:
