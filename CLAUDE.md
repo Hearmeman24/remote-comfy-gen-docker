@@ -130,6 +130,68 @@ git push origin v<N>                # re-push it
 5. Fetch the step log via its presigned URL.
 6. Fix code → push commit to main (won't trigger build) → delete tag → re-push tag (triggers build).
 
+## Releasing a new image — the full flow
+
+Everything in the image (ComfyUI core + every custom node) is pinned to a SHA in `nodes.lock`. The Dockerfile reads `nodes.lock` line-by-line and `git checkout <sha>` after cloning each repo, so two builds of the same tag produce identical trees. Bumping a node = re-snapshotting your local ComfyUI state into the lockfile.
+
+### Standard release (no node changes)
+
+If you just want a fresh build of the current pinned state:
+
+```bash
+git -C serverless-docker/ tag -a v<N> -m "v<N>"
+git -C serverless-docker/ push origin v<N>
+```
+
+CircleCI's `^v.*$` tag filter fires `build_and_push` → `update_endpoint` → `wait_for_rollout` → `smoke_test` matrix → `notify_done`. See the upper "CircleCI" section for monitoring.
+
+### Bumping pinned nodes (the common case after authoring against newer node versions locally)
+
+1. **Pull / update locally first.** In `~/src/comfy/ComfyUI/custom_nodes/<node>/`, `git pull` to whatever ref you want. Same for `~/src/comfy/ComfyUI/` itself for ComfyUI core. Test workflows against this state.
+2. **Freeze.**
+   ```bash
+   cd serverless-docker/
+   python3 scripts/freeze.py
+   ```
+   Snapshots every local SHA into `nodes.lock`. Reads the Dockerfile's node list as canonical (what ships); for any Dockerfile-listed node missing from local, falls back to `git ls-remote <url> HEAD` and warns. Also warns about local-only nodes not in the Dockerfile.
+3. **Review the lockfile diff.** `git -C serverless-docker/ diff nodes.lock` shows exactly which SHAs moved. This is your release notes draft.
+4. **Commit + tag + push.**
+   ```bash
+   git -C serverless-docker/ add nodes.lock
+   git -C serverless-docker/ commit -m "Bump <N> nodes to <reason>"
+   git -C serverless-docker/ tag -a v<N> -m "v<N>"
+   git -C serverless-docker/ push && git -C serverless-docker/ push --tags
+   ```
+
+`scripts/freeze.py --check` exits 1 if `nodes.lock` would change without writing — useful for a pre-commit guard.
+
+### Adding a new custom node
+
+1. Clone it into `~/src/comfy/ComfyUI/custom_nodes/<name>` and install its `requirements.txt` in your local venv.
+2. Add the repo URL to the loop in `Dockerfile` (sorted with the others; loop reads from `nodes.lock`, but the Dockerfile is still the canonical source of what to ship).
+3. **Important:** the Dockerfile loop iterates `nodes.lock` — you also need to add an entry. The cleanest path is `python3 scripts/freeze.py` after step (2); freeze sees the new dir in local + sees it in Dockerfile → writes the entry.
+4. Commit `Dockerfile` + `nodes.lock` together; tag + push.
+
+### Removing a node
+
+1. Delete its URL from the Dockerfile.
+2. `python3 scripts/freeze.py` — entry disappears from `nodes.lock` (or stays as orphan; freeze re-derives from Dockerfile list).
+3. Commit both; tag + push.
+
+### When something drifts
+
+Two failure modes:
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Workflow's "Required input is missing" / "Value not in list" after a tag | Node was bumped (in `nodes.lock`) since the workflow was authored | Re-author against current local, OR roll back the node's pin in `nodes.lock` to the SHA that matched the workflow's authoring time |
+| `freeze.py` reports "missing locally — used remote HEAD fallback" | Dockerfile lists a node you don't have in `~/src/comfy/ComfyUI/custom_nodes/` (or it was extracted without `.git`) | Either `git clone` the missing repo into local (clean), or accept the remote fallback (lockfile is still pinned to a real SHA) |
+| `freeze.py` reports "local-only node not in Dockerfile" | You have a node locally that won't ship | Add to Dockerfile if you use it in workflows; ignore otherwise |
+
+### Hotpatches at boot
+
+`serverless-runtime/start.sh` (separate repo, pulled at cold start) currently carries one hotpatch: kijai `ComfyUI-WanAnimatePreprocess` ONNX-dropdown fix (upstream issue #32). Idempotent. To be removed once the upstream PR (bead `4bs`) is merged.
+
 ## Brain
 
 Project-level brain lives in the sibling `remote_comfy_generator` repo at `docs/brain/`. Image-build/CI/Docker concerns aren't covered there yet — add an `infra/circleci.md` page if this CI workflow becomes load-bearing.
