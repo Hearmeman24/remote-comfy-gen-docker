@@ -204,6 +204,12 @@ jobs:
             comfy-gen config --set runpod_api_key="${{RUNPOD_API_KEY}}"
             comfy-gen config --set endpoint_id="{ENDPOINT_ID}"
             comfy-gen config --set civitai_token="${{CIVITAI_TOKEN}}" || true
+            # S3 credentials for `comfy-gen submit --input` uploads (smoke_inputs fixtures).
+            # Required for presets with image/video inputs (e.g. wan-animate).
+            comfy-gen config --set aws_access_key_id="${{AWS_ACCESS_KEY_ID}}"
+            comfy-gen config --set aws_secret_access_key="${{AWS_SECRET_ACCESS_KEY}}"
+            comfy-gen config --set s3_bucket="${{S3_BUCKET}}"
+            comfy-gen config --set s3_region="${{S3_REGION}}"
       - run:
           name: Run smoke for preset << parameters.preset_id >>
           no_output_timeout: 60m
