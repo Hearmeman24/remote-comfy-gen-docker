@@ -200,6 +200,10 @@ jobs:
       - run:
           name: Configure comfy-gen
           command: |
+            # boto3 is needed at submit-time for S3 input uploads (smoke_inputs
+            # fixtures on presets like wan-animate). comfy-gen doesn't pin it as
+            # a hard dep — only required when --input is used.
+            pip install --quiet boto3
             mkdir -p ~/.config/comfy-gen
             comfy-gen config --set runpod_api_key="${{RUNPOD_API_KEY}}"
             comfy-gen config --set endpoint_id="{ENDPOINT_ID}"
