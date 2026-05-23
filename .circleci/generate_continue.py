@@ -102,12 +102,30 @@ jobs:
       - notify-flowbot:
           message: "Tell me that the comfyui-serverless:${{CIRCLE_TAG:-latest}} Docker build has started. Commit ${{CIRCLE_SHA1:0:7}}: ${{COMMIT_MSG}}"
       - run:
-          name: Build & push ComfyUI serverless image
+          name: Set up buildx (docker-container driver, required for registry cache)
+          command: |
+            docker buildx create --name comfybuilder --driver docker-container --use || \
+              docker buildx use comfybuilder
+            docker buildx inspect --bootstrap
+      - run:
+          name: Build & push ComfyUI serverless image (with registry cache)
+          # --cache-to/--cache-from with mode=max exports every intermediate layer
+          # to docker.io/$DOCKERHUB_USER/comfyui-serverless:buildcache. A no-op
+          # rebuild of an unchanged tree hits the cache for every layer and finishes
+          # in ~3 min instead of ~13. A single-node-bump rebuild hits cache for apt,
+          # ComfyUI core, sageattention, runpod deps, and re-runs only the node-loop
+          # layer plus verify+CivitAI+volatile COPYs downstream of nodes.lock.
           command: |
             TAG="${{CIRCLE_TAG:-latest}}"
             IMG="docker.io/$DOCKERHUB_USER/comfyui-serverless"
-            docker build --progress=plain -t "${{IMG}}:${{TAG}}" .
-            docker push "${{IMG}}:${{TAG}}"
+            CACHE_REF="${{IMG}}:buildcache"
+            docker buildx build \\
+              --progress=plain \\
+              --cache-to "type=registry,ref=${{CACHE_REF}},mode=max" \\
+              --cache-from "type=registry,ref=${{CACHE_REF}}" \\
+              -t "${{IMG}}:${{TAG}}" \\
+              --push \\
+              .
             touch /tmp/build_success
       - run:
           name: Notify FlowBot — build complete
