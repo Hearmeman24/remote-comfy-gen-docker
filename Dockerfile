@@ -56,7 +56,7 @@ RUN set -e; \
       [ "$url" = "https://github.com/comfyanonymous/ComfyUI.git" ] && continue; \
       cd /ComfyUI/custom_nodes; \
       repo_dir=$(basename "$url" .git); \
-      echo "=== Installing $repo_dir @ ${sha:0:8} ==="; \
+      echo "=== Installing $repo_dir @ $sha ==="; \
       git clone "$url" "$repo_dir"; \
       git -C "$repo_dir" checkout "$sha"; \
       if [ -f "/ComfyUI/custom_nodes/$repo_dir/requirements.txt" ]; then \
