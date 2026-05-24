@@ -16,8 +16,18 @@ echo "[installer] starting"
 
 # Volume preflight — fail fast with a clear exit code (2) so the BlockFlow
 # poller can distinguish "infra wrong" from "download failed".
+#
+# Mount-path quirk: RunPod **pods** mount network volumes at /workspace, but
+# **serverless workers** mount the same volume at /runpod-volume — and
+# download_handler.py hardcodes /runpod-volume/ComfyUI/models so worker code
+# remains a single source of truth. If we're on a pod (/workspace exists,
+# /runpod-volume doesn't), symlink to keep paths consistent.
+if [ ! -d /runpod-volume ] && [ -d /workspace ]; then
+    ln -s /workspace /runpod-volume
+    echo "[installer] symlinked /runpod-volume -> /workspace (pod-mount mode)"
+fi
 if [ ! -d /runpod-volume ]; then
-    echo "[installer] FATAL: /runpod-volume not mounted"
+    echo "[installer] FATAL: network volume not mounted (neither /runpod-volume nor /workspace)"
     exit 2
 fi
 if ! touch /runpod-volume/.installer-write-test 2>/dev/null; then
