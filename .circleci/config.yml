@@ -37,6 +37,9 @@ workflows:
       - setup:
           filters:
             tags:
-              only: /^v.*$/
+              # Match both worker tags (vN) and installer tags (installer-vN).
+              # The continuation YAML routes each to the right workflow via its
+              # own tag filter — see generate_continue.py.
+              only: /^(installer-)?v.*$/
             branches:
               ignore: /.*/
