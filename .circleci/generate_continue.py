@@ -230,7 +230,45 @@ jobs:
       - notify-flowbot:
           message: "Tell me that the comfyui-serverless:${{CIRCLE_TAG:-latest}} full pipeline (build + rollout + smoke) succeeded. Commit ${{CIRCLE_SHA1:0:7}}."
 
+  build_and_push_installer:
+    # CPU installer image — built from Dockerfile.installer. No endpoint update,
+    # no rollout wait, no smoke. The image is exercised by live BlockFlow
+    # installer pod runs; CI just builds + pushes the tag.
+    executor: docker-dind
+    steps:
+      - checkout
+      - run:
+          name: Log in to Docker Hub
+          command: |
+            echo "$DOCKERHUB_PAT" | docker login -u "$DOCKERHUB_USER" --password-stdin
+      - run:
+          name: Set up buildx
+          command: |
+            docker buildx create --name comfybuilder --driver docker-container --use || \
+              docker buildx use comfybuilder
+            docker buildx inspect --bootstrap
+      - run:
+          name: Build & push installer image (separate buildcache from worker)
+          command: |
+            TAG="${{CIRCLE_TAG:-installer-latest}}"
+            IMG="docker.io/$DOCKERHUB_USER/comfyui-serverless"
+            CACHE_REF="${{IMG}}:installer-buildcache"
+            docker buildx build \\
+              --progress=plain \\
+              -f Dockerfile.installer \\
+              --cache-to "type=registry,ref=${{CACHE_REF}},mode=max" \\
+              --cache-from "type=registry,ref=${{CACHE_REF}}" \\
+              -t "${{IMG}}:${{TAG}}" \\
+              --push \\
+              .
+
 workflows:
+  build-installer:
+    jobs:
+      - build_and_push_installer:
+          context: [docker-hub]
+          filters: {{ tags: {{ only: /^installer-v.*$/ }}, branches: {{ ignore: /.*/ }} }}
+
   build-deploy-smoke:
     jobs:
       - build_and_push:

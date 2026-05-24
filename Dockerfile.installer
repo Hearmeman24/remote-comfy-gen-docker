@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1.7
+# CPU installer pod image — runs on a tiny non-GPU pod to download a preset's
+# models onto a network volume, then exits. Pairs with install-entrypoint.sh,
+# which git-clones serverless-runtime and invokes download_handler in CLI mode.
+#
+# Intentionally minimal: no torch, no ComfyUI, no custom nodes — just python,
+# aria2c, git. Target image size ~200 MB.
+FROM python:3.12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        aria2 git ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# runpod is imported by download_handler for progress updates; the call is
+# wrapped in try/except so it's a no-op when no harness is attached (which is
+# the installer-pod case).
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --upgrade pip && \
+    pip install runpod
+
+COPY install-entrypoint.sh /install-entrypoint.sh
+RUN chmod +x /install-entrypoint.sh
+
+CMD ["/install-entrypoint.sh"]
