@@ -36,10 +36,17 @@ if ! touch /runpod-volume/.installer-write-test 2>/dev/null; then
 fi
 rm -f /runpod-volume/.installer-write-test
 
-# Clone runtime — same pattern as the GPU image's start_script.sh, minus the
-# warm-pull optimization (one-shot pod, no reuse).
-git clone --depth 1 --branch "$RUNTIME_REPO_REF" "$RUNTIME_REPO_URL" /runtime
-echo "[installer] runtime cloned at $(git -C /runtime rev-parse HEAD)"
+# Clone runtime — idempotent so container restarts (which RunPod pods can do
+# after CMD exits, since the container disk persists) don't fail on a stale
+# /runtime directory.
+if [ -d /runtime/.git ]; then
+    git -C /runtime fetch --depth 1 origin "$RUNTIME_REPO_REF"
+    git -C /runtime reset --hard FETCH_HEAD
+else
+    rm -rf /runtime
+    git clone --depth 1 --branch "$RUNTIME_REPO_REF" "$RUNTIME_REPO_URL" /runtime
+fi
+echo "[installer] runtime at $(git -C /runtime rev-parse HEAD)"
 
 echo "[installer] fetching preset $PRESET_ID"
 PRESET_URL=$(curl -fsSL "$PRESET_REGISTRY_MANIFEST" \
@@ -59,4 +66,23 @@ print(json.dumps({'input': {'command': 'download', 'downloads': batch}}))
 " > /tmp/job.json
 
 cd /runtime
-exec python -m download_handler --job /tmp/job.json
+python -m download_handler --job /tmp/job.json
+HANDLER_RC=$?
+echo "[installer] download_handler exited with rc=$HANDLER_RC"
+
+# Self-terminate so billing stops. RunPod pods bill for the entire wall time
+# the pod is allocated — CMD exiting does NOT stop billing the way it does
+# for serverless workers. We delete ourselves via the REST API; the caller
+# (BlockFlow) reads the {"ok": ...} JSON from the saved pod logs.
+#
+# Opt-in: requires RUNPOD_API_KEY in env. Without it, the container exits
+# but the pod stays allocated until the caller deletes it.
+if [ -n "${RUNPOD_API_KEY:-}" ] && [ -n "${RUNPOD_POD_ID:-}" ]; then
+    echo "[installer] self-terminating pod $RUNPOD_POD_ID"
+    sleep 2  # flush logs
+    curl -s -X DELETE \
+        "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" \
+        -H "Authorization: Bearer $RUNPOD_API_KEY" >/dev/null || true
+fi
+
+exit "$HANDLER_RC"
