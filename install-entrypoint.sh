@@ -1,27 +1,24 @@
 #!/bin/bash
 # CPU installer pod entrypoint.
 #
-# Clones serverless-runtime, fetches the BlockFlow preset manifest, translates
-# preset.models into a download_handler job, and exec's the handler in CLI
-# mode. Pod exits with the handler's status: 0 on success, non-zero on failure.
-# RunPod stops billing on pod exit.
+# Two modes:
+#   - server (default): boot installer_server on :3000 and let BlockFlow drive
+#     it over RunPod's HTTP proxy. POST /install/<preset_id> returns an SSE
+#     stream; POST /shutdown self-terminates the pod.
+#   - oneshot (legacy / ixd): if PRESET_ID env is set or INSTALLER_MODE=oneshot,
+#     fetch the manifest, run download_handler, exit. Pod exit stops billing
+#     for serverless workers but NOT for pods — see self-terminate block below.
 set -euo pipefail
 
 echo "[installer] starting"
 
-: "${PRESET_ID:?env var required}"
 : "${PRESET_REGISTRY_MANIFEST:=https://raw.githubusercontent.com/Hearmeman24/blockflow-presets/main/manifest.json}"
 : "${RUNTIME_REPO_URL:=https://github.com/Hearmeman24/remote-comfy-gen-handler.git}"
 : "${RUNTIME_REPO_REF:=main}"
+: "${INSTALLER_MODE:=server}"
 
-# Volume preflight — fail fast with a clear exit code (2) so the BlockFlow
-# poller can distinguish "infra wrong" from "download failed".
-#
-# Mount-path quirk: RunPod **pods** mount network volumes at /workspace, but
-# **serverless workers** mount the same volume at /runpod-volume — and
-# download_handler.py hardcodes /runpod-volume/ComfyUI/models so worker code
-# remains a single source of truth. If we're on a pod (/workspace exists,
-# /runpod-volume doesn't), symlink to keep paths consistent.
+# Mount-path quirk: pods mount the network volume at /workspace, workers at
+# /runpod-volume — download_handler hardcodes /runpod-volume so symlink it.
 if [ ! -d /runpod-volume ] && [ -d /workspace ]; then
     ln -s /workspace /runpod-volume
     echo "[installer] symlinked /runpod-volume -> /workspace (pod-mount mode)"
@@ -36,8 +33,7 @@ if ! touch /runpod-volume/.installer-write-test 2>/dev/null; then
 fi
 rm -f /runpod-volume/.installer-write-test
 
-# Clone runtime — idempotent so container restarts (which RunPod pods can do
-# after CMD exits, since the container disk persists) don't fail on a stale
+# Clone the runtime — idempotent so container restarts don't fail on a stale
 # /runtime directory.
 if [ -d /runtime/.git ]; then
     git -C /runtime fetch --depth 1 origin "$RUNTIME_REPO_REF"
@@ -48,14 +44,16 @@ else
 fi
 echo "[installer] runtime at $(git -C /runtime rev-parse HEAD)"
 
-echo "[installer] fetching preset $PRESET_ID"
-PRESET_URL=$(curl -fsSL "$PRESET_REGISTRY_MANIFEST" \
-    | python3 -c "import json,sys; m=json.load(sys.stdin); print(next(p['preset_url'] for p in m['presets'] if p['id']==sys.argv[1]))" "$PRESET_ID")
-PRESET_JSON=$(curl -fsSL "$PRESET_URL")
+cd /runtime
 
-# Translate preset.models → download_handler batch. Worker dispatch shape:
-# {"input": {"command": "download", "downloads": [...]}}.
-echo "$PRESET_JSON" | python3 -c "
+# Mode branch — PRESET_ID env or INSTALLER_MODE=oneshot picks the legacy path.
+if [ -n "${PRESET_ID:-}" ] || [ "$INSTALLER_MODE" = "oneshot" ]; then
+    : "${PRESET_ID:?PRESET_ID required for oneshot mode}"
+    echo "[installer] mode=oneshot preset=$PRESET_ID"
+    PRESET_URL=$(curl -fsSL "$PRESET_REGISTRY_MANIFEST" \
+        | python3 -c "import json,sys; m=json.load(sys.stdin); print(next(p['preset_url'] for p in m['presets'] if p['id']==sys.argv[1]))" "$PRESET_ID")
+    PRESET_JSON=$(curl -fsSL "$PRESET_URL")
+    echo "$PRESET_JSON" | python3 -c "
 import json, sys
 preset = json.load(sys.stdin)
 batch = [
@@ -65,24 +63,26 @@ batch = [
 print(json.dumps({'input': {'command': 'download', 'downloads': batch}}))
 " > /tmp/job.json
 
-cd /runtime
-python -m download_handler --job /tmp/job.json
-HANDLER_RC=$?
-echo "[installer] download_handler exited with rc=$HANDLER_RC"
+    python -m download_handler --job /tmp/job.json
+    HANDLER_RC=$?
+    echo "[installer] download_handler exited with rc=$HANDLER_RC"
 
-# Self-terminate so billing stops. RunPod pods bill for the entire wall time
-# the pod is allocated — CMD exiting does NOT stop billing the way it does
-# for serverless workers. We delete ourselves via the REST API; the caller
-# (BlockFlow) reads the {"ok": ...} JSON from the saved pod logs.
-#
-# Opt-in: requires RUNPOD_API_KEY in env. Without it, the container exits
-# but the pod stays allocated until the caller deletes it.
-if [ -n "${RUNPOD_API_KEY:-}" ] && [ -n "${RUNPOD_POD_ID:-}" ]; then
-    echo "[installer] self-terminating pod $RUNPOD_POD_ID"
-    sleep 2  # flush logs
-    curl -s -X DELETE \
-        "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" \
-        -H "Authorization: Bearer $RUNPOD_API_KEY" >/dev/null || true
+    if [ -n "${RUNPOD_API_KEY:-}" ] && [ -n "${RUNPOD_POD_ID:-}" ]; then
+        echo "[installer] self-terminating pod $RUNPOD_POD_ID"
+        sleep 2
+        curl -s -X DELETE \
+            "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" \
+            -H "Authorization: Bearer $RUNPOD_API_KEY" >/dev/null || true
+    fi
+    exit "$HANDLER_RC"
 fi
 
-exit "$HANDLER_RC"
+# Server mode: requires INSTALLER_TOKEN so the RunPod HTTP proxy isn't
+# wide-open. BlockFlow injects this at pod-spawn time.
+: "${INSTALLER_TOKEN:?INSTALLER_TOKEN required for server mode}"
+echo "[installer] mode=server port=${INSTALLER_PORT:-3000}"
+# --token=$VAR (equals form) — value may start with `-` (URL-safe base64);
+# space-separated form would let argparse misread that as a flag.
+exec python -m installer_server \
+    --port "${INSTALLER_PORT:-3000}" \
+    --token="$INSTALLER_TOKEN"
