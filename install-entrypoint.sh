@@ -81,6 +81,8 @@ fi
 # wide-open. BlockFlow injects this at pod-spawn time.
 : "${INSTALLER_TOKEN:?INSTALLER_TOKEN required for server mode}"
 echo "[installer] mode=server port=${INSTALLER_PORT:-3000}"
+# --token=$VAR (equals form) — value may start with `-` (URL-safe base64);
+# space-separated form would let argparse misread that as a flag.
 exec python -m installer_server \
     --port "${INSTALLER_PORT:-3000}" \
-    --token "$INSTALLER_TOKEN"
+    --token="$INSTALLER_TOKEN"
