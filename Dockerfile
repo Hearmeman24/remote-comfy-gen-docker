@@ -98,8 +98,12 @@ import sageattention; print('sageattention OK'); \
 "
 
 # CivitAI downloader (uses aria2c which is already installed above).
-# Kept as --depth 1 since we always want HEAD here (it's a small helper repo).
-RUN git clone --depth 1 https://github.com/Hearmeman24/CivitAI_Downloader /tools/civitai-downloader
+# SHA-pinned so image content is deterministic and the layer cache only invalidates
+# when this ARG is bumped. To update: `git ls-remote https://github.com/Hearmeman24/CivitAI_Downloader HEAD`.
+ARG CIVITAI_DL_SHA=2670fc951feb364d91895369530e62b57b90e48d
+RUN git clone https://github.com/Hearmeman24/CivitAI_Downloader /tools/civitai-downloader \
+ && git -C /tools/civitai-downloader checkout --quiet "$CIVITAI_DL_SHA" \
+ && rm -rf /tools/civitai-downloader/.git
 
 # Volatile config + scripts at the END so edits to start_script.sh / yaml
 # don't invalidate any heavy layer above. (Ordering matters for cache reuse:
