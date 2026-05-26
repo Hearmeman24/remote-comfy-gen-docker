@@ -25,6 +25,13 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     pip install --upgrade pip && \
     pip install runpod aiohttp
 
+# CivitAI downloader — required by serverless-runtime/download_handler.py for
+# any preset entry with source=civitai. Keep SHA in sync with Dockerfile.
+ARG CIVITAI_DL_SHA=2670fc951feb364d91895369530e62b57b90e48d
+RUN git clone https://github.com/Hearmeman24/CivitAI_Downloader /tools/civitai-downloader \
+ && git -C /tools/civitai-downloader checkout --quiet "$CIVITAI_DL_SHA" \
+ && rm -rf /tools/civitai-downloader/.git
+
 COPY install-entrypoint.sh /install-entrypoint.sh
 RUN chmod +x /install-entrypoint.sh
 
