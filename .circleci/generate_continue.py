@@ -154,7 +154,7 @@ jobs:
             TAG="${{CIRCLE_TAG:-latest}}"
             NEW_IMAGE="hearmeman/comfyui-serverless:${{TAG}}"
             # Fetch the templateId from the endpoint, then patch the template.
-            python3 \<<PY
+            python3 \\<<PY
             import json, os, urllib.request
             HDR = {{
                 "Authorization": f"Bearer {{os.environ['RUNPOD_API_KEY']}}",
@@ -224,6 +224,77 @@ jobs:
             curl -sSL "https://raw.githubusercontent.com/Hearmeman24/ComfyGen/main/automation/validate_workflow.py" -o /tmp/validate_workflow.py
             python3 /tmp/smoke_preset.py "<< parameters.preset_id >>" --endpoint-id {ENDPOINT_ID} --workflow-timeout 2700
 
+  publish_runtime_manifest:
+    executor: python
+    steps:
+      - checkout
+      - run:
+          name: Render runtime manifest
+          command: |
+            TAG="${{CIRCLE_TAG:-}}"
+            python3 scripts/write_runtime_manifest.py --tag "${{TAG}}" --output /tmp/runtime-manifest.json
+            python3 -m json.tool /tmp/runtime-manifest.json >/dev/null
+            cat /tmp/runtime-manifest.json
+      - run:
+          name: Push runtime manifest to blockflow-presets
+          command: |
+            if [ -z "${{BLOCKFLOW_PRESETS_PUSH_TOKEN:-}}" ]; then
+              echo "BLOCKFLOW_PRESETS_PUSH_TOKEN is required to update Hearmeman24/blockflow-presets/runtime-manifest.json."
+              exit 1
+            fi
+
+            git clone "https://x-access-token:${{BLOCKFLOW_PRESETS_PUSH_TOKEN}}@github.com/Hearmeman24/blockflow-presets.git" /tmp/blockflow-presets
+            cp /tmp/runtime-manifest.json /tmp/blockflow-presets/runtime-manifest.json
+            cd /tmp/blockflow-presets
+
+            git config user.name "comfygen-ci"
+            git config user.email "comfygen-ci@users.noreply.github.com"
+            git add runtime-manifest.json
+            if git diff --cached --quiet; then
+              echo "runtime-manifest.json is already current."
+              exit 0
+            fi
+            git commit -m "chore: update ComfyGen runtime manifest to ${{CIRCLE_TAG}}"
+            git push origin main
+
+  test_runtime_manifest_publish:
+    executor: python
+    steps:
+      - checkout
+      - run:
+          name: Render manifest dry-run
+          command: |
+            TEST_TAG="${{CIRCLE_TAG#manifest-test-}}"
+            python3 scripts/write_runtime_manifest.py --tag "${{TEST_TAG}}" --output /tmp/runtime-manifest.json
+            python3 -m json.tool /tmp/runtime-manifest.json >/dev/null
+            cat /tmp/runtime-manifest.json
+      - run:
+          name: Verify blockflow-presets write access without touching main
+          command: |
+            if [ -z "${{BLOCKFLOW_PRESETS_PUSH_TOKEN:-}}" ]; then
+              echo "BLOCKFLOW_PRESETS_PUSH_TOKEN is required to update Hearmeman24/blockflow-presets/runtime-manifest.json."
+              exit 1
+            fi
+
+            git clone "https://x-access-token:${{BLOCKFLOW_PRESETS_PUSH_TOKEN}}@github.com/Hearmeman24/blockflow-presets.git" /tmp/blockflow-presets
+            cd /tmp/blockflow-presets
+
+            TEST_BRANCH="ci/runtime-manifest-token-test-${{CIRCLE_WORKFLOW_ID}}"
+            git switch -c "${{TEST_BRANCH}}"
+            git config user.name "comfygen-ci"
+            git config user.email "comfygen-ci@users.noreply.github.com"
+            mkdir -p .ci-token-test
+            {{
+              echo "Runtime manifest token dry-run."
+              echo "workflow=${{CIRCLE_WORKFLOW_ID}}"
+              echo "tag=${{CIRCLE_TAG}}"
+              cat /tmp/runtime-manifest.json
+            }} > .ci-token-test/runtime-manifest-token-test.txt
+            git add .ci-token-test/runtime-manifest-token-test.txt
+            git commit -m "test: verify runtime manifest publish token"
+            git push origin "${{TEST_BRANCH}}"
+            git push origin --delete "${{TEST_BRANCH}}"
+
   notify_done:
     executor: python
     steps:
@@ -267,32 +338,42 @@ workflows:
     jobs:
       - build_and_push_installer:
           context: [docker-hub]
-          filters: {{ tags: {{ only: /^installer-v.*$/ }}, branches: {{ ignore: /.*/ }} }}
+          filters: {{ tags: {{ only: "/^installer-v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
+
+  test-runtime-manifest-publisher:
+    jobs:
+      - test_runtime_manifest_publish:
+          context: [docker-hub]
+          filters: {{ tags: {{ only: "/^manifest-test-v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
 
   build-deploy-smoke:
     jobs:
       - build_and_push:
           context: [docker-hub, flowbot-webhook-token]
-          filters: {{ tags: {{ only: /^v.*$/ }}, branches: {{ ignore: /.*/ }} }}
+          filters: {{ tags: {{ only: "/^v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
       - update_endpoint:
           context: [docker-hub]
           requires: [build_and_push]
-          filters: {{ tags: {{ only: /^v.*$/ }}, branches: {{ ignore: /.*/ }} }}
+          filters: {{ tags: {{ only: "/^v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
       - wait_for_rollout:
           context: [docker-hub]
           requires: [update_endpoint]
-          filters: {{ tags: {{ only: /^v.*$/ }}, branches: {{ ignore: /.*/ }} }}
+          filters: {{ tags: {{ only: "/^v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
       - smoke_test:
           context: [docker-hub]
           requires: [wait_for_rollout]
           matrix:
             parameters:
               preset_id: {presets_yaml}
-          filters: {{ tags: {{ only: /^v.*$/ }}, branches: {{ ignore: /.*/ }} }}
+          filters: {{ tags: {{ only: "/^v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
+      - publish_runtime_manifest:
+          context: [docker-hub]
+          requires: [smoke_test]
+          filters: {{ tags: {{ only: "/^v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
       - notify_done:
           context: [flowbot-webhook-token]
-          requires: [smoke_test]
-          filters: {{ tags: {{ only: /^v.*$/ }}, branches: {{ ignore: /.*/ }} }}
+          requires: [publish_runtime_manifest]
+          filters: {{ tags: {{ only: "/^v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
 """
 
 
