@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Snapshot local ComfyUI + custom-node SHAs into nodes.lock.
 
-Reads the Dockerfile's `for repo in ...` block as the canonical node list
-(the set of nodes that ship in the image). For each repo it tries to read
-the SHA from the local clone at ~/src/comfy/ComfyUI/custom_nodes/<dir>;
-falls back to `git ls-remote <url> HEAD` if the local copy is missing.
-Captures ComfyUI core SHA the same way from ~/src/comfy/ComfyUI/.git.
+Reads the existing nodes.lock as the canonical node list (the set of repo
+URLs that ship in the image — the Dockerfile's node loop reads URLs from
+nodes.lock, so the lockfile is the source of truth, not the Dockerfile).
+For each repo it tries to read the SHA from the local clone at
+~/src/comfy/ComfyUI/custom_nodes/<dir>; falls back to `git ls-remote <url>
+HEAD` if the local copy is missing. Captures ComfyUI core SHA the same way
+from ~/src/comfy/ComfyUI/.git. This re-pins existing nodes to current local
+SHAs; it does not add new nodes (add the URL to nodes.lock to ship one).
 
 Also warns on:
-  - Local-only nodes not in the Dockerfile (you might want to ship them)
-  - Dockerfile-listed nodes missing locally (we used remote HEAD fallback)
+  - Local-only nodes not in nodes.lock (you might want to ship them)
+  - Locked nodes missing locally (we used remote HEAD fallback)
 
 Output: nodes.lock at the repo root, one entry per line:
     <repo_url> <sha>
@@ -25,40 +28,34 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent  # serverless-docker/
-DOCKERFILE = REPO_ROOT / "Dockerfile"
 LOCKFILE = REPO_ROOT / "nodes.lock"
 LOCAL_COMFYUI = Path.home() / "src" / "comfy" / "ComfyUI"
 COMFYUI_REPO_URL = "https://github.com/comfyanonymous/ComfyUI.git"
 
-# Sentinel comments in the Dockerfile for the node-loop block; if these
-# move/change, update them here.
-NODE_BLOCK_START = "RUN for repo in"
-NODE_BLOCK_END = "do "  # any continuation that ends the `for repo in ... ;`
+def parse_locked_repos() -> list[str]:
+    """Return the custom-node repo URLs from nodes.lock (excludes ComfyUI core).
 
-
-def parse_dockerfile_repos() -> list[str]:
-    """Return the ordered list of custom-node repo URLs from the Dockerfile."""
-    in_block = False
+    nodes.lock is the canonical node list: the Dockerfile's node loop reads
+    `<url> <sha>` lines straight from it. Each non-comment line is
+    `<repo_url> <sha>`; we take the URL column. ComfyUI core is captured
+    separately (sha_from_local on the core tree), so it is skipped here.
+    """
+    if not LOCKFILE.exists():
+        return []
     repos: list[str] = []
-    for line in DOCKERFILE.read_text().splitlines():
+    for line in LOCKFILE.read_text().splitlines():
         stripped = line.strip()
-        if not in_block:
-            if NODE_BLOCK_START in stripped:
-                in_block = True
+        if not stripped or stripped.startswith("#"):
             continue
-        # End of the repo list: line starting `do \` or `done`
-        if stripped.startswith("do ") or stripped.startswith("done"):
-            break
-        # Repo line ends with `\` and contains a URL ending in .git
-        m = re.search(r"(https://github\.com/[^\s]+\.git)", line)
-        if m:
-            repos.append(m.group(1))
+        url = stripped.split()[0]
+        if url == COMFYUI_REPO_URL:
+            continue
+        repos.append(url)
     return repos
 
 
@@ -103,9 +100,9 @@ def sha_from_remote(url: str) -> str | None:
 
 
 def gather_local_only() -> list[str]:
-    """Return basenames of local custom_nodes dirs not in the Dockerfile list."""
-    docker_basenames = {url.rsplit("/", 1)[-1].removesuffix(".git").lower()
-                        for url in parse_dockerfile_repos()}
+    """Return basenames of local custom_nodes dirs not in nodes.lock."""
+    locked_basenames = {url.rsplit("/", 1)[-1].removesuffix(".git").lower()
+                        for url in parse_locked_repos()}
     local_dir = LOCAL_COMFYUI / "custom_nodes"
     if not local_dir.is_dir():
         return []
@@ -113,7 +110,7 @@ def gather_local_only() -> list[str]:
     for child in sorted(local_dir.iterdir()):
         if not child.is_dir() or not (child / ".git").is_dir():
             continue
-        if child.name.lower() not in docker_basenames:
+        if child.name.lower() not in locked_basenames:
             extras.append(child.name)
     return extras
 
@@ -123,7 +120,7 @@ def freeze() -> tuple[list[tuple[str, str, str]], list[str], list[str]]:
     entries = [(repo_url, sha, source), ...] sorted by repo_url.
     source = "local" or "remote".
     """
-    repos = parse_dockerfile_repos()
+    repos = parse_locked_repos()
     entries: list[tuple[str, str, str]] = []
     missing_local: list[str] = []
 
@@ -187,15 +184,15 @@ def main() -> None:
     new = render(entries)
 
     if missing_local:
-        print(f"\nNOTE: {len(missing_local)} Dockerfile-listed node(s) not in your local "
+        print(f"\nNOTE: {len(missing_local)} locked node(s) not in your local "
               f"~/src/comfy/ComfyUI/custom_nodes/ — used remote HEAD fallback:",
               file=sys.stderr)
         for url in missing_local:
             print(f"  - {url}", file=sys.stderr)
 
     if local_only:
-        print(f"\nNOTE: {len(local_only)} local-only node dir(s) NOT in Dockerfile — "
-              f"will not ship. If you use any in workflows, add to Dockerfile:",
+        print(f"\nNOTE: {len(local_only)} local-only node dir(s) NOT in nodes.lock — "
+              f"will not ship. If you use any in workflows, add to nodes.lock:",
               file=sys.stderr)
         for name in local_only:
             print(f"  - {name}", file=sys.stderr)
