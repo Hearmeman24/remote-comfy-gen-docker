@@ -63,28 +63,24 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 # Freeze torch versions to prevent custom node deps from upgrading/downgrading
 RUN pip freeze | grep -E "^(torch|torchvision|torchaudio|torchsde)==" > /torch-constraint.txt
 
-# SageAttention — built from source for cu130 (the old cu128 wheel links libcudart.so.12
-# and fails to import on cu130). The devel base already provides nvcc 13.0 + cudart-dev +
-# cublas-dev, so no extra CUDA apt install is needed. nvcc cross-compiles for the target
-# arches without a GPU present (arch is compile-time), so this builds on CPU CI.
-#   - SHA d1a57a5 is the proven build point.
-#   - TORCH_CUDA_ARCH_LIST uses ';' (setup.py splits on ';'/',', NOT spaces) and EXCLUDES
-#     9.0: setup.py broadcasts the full arch list to every module, and the Hopper
-#     _qattn_sm90 wgmma kernel cannot assemble for sm_120a. Net coverage: Ampere(8.0) +
-#     Ada(8.9) + Blackwell(12.0); no Hopper (sm_90 falls back to default attn, no crash).
-#   - --no-build-isolation builds against the already-installed torch 2.11.0+cu130 (build
-#     isolation would pull a fresh, possibly-mismatched torch into the build env).
-# Import success here is NOT proof the kernel runs — the authoritative check is the
-# runtime kernel probe in serverless-runtime/start.sh, which only enables
-# --use-sage-attention if a real sageattn launch completes on the actual GPU.
+# SageAttention — pre-built cu130 wheel (the old cu128 wheel links libcudart.so.12 and
+# fails to import on cu130 with an undefined-symbol ImportError). Built out-of-band from
+# SageAttention SHA d1a57a5 against torch 2.11.0+cu130 + nvcc 13.0, cp312, for
+# TORCH_CUDA_ARCH_LIST="8.0;8.9;12.0" — Ampere(8.0) + Ada(8.9) + Blackwell sm_120a; 9.0 is
+# excluded (the Hopper _qattn_sm90 wgmma kernel cannot assemble for sm_120a). sm_120a SASS
+# rides inside _qattn_sm89.so (no separate sm120 module at this SHA). The wheel is baked
+# rather than compiled in-CI because the sm_120 fp8 kernels OOM-kill the CI build box even
+# at xlarge/32 GB; it is compiled on a high-RAM cu130 box and committed here (see
+# serverless-docker/CLAUDE.md → "Rebuilding the SageAttention wheel").
+#   - Verified on the build box: imports clean, links libcudart.so.13 (not .12), and the
+#     _qattn_sm89 module exposes the fp8 attn symbols.
+# Import success is NOT proof the kernel runs — the authoritative check is the runtime
+# kernel probe in serverless-runtime/start.sh, which only enables --use-sage-attention if
+# a real sageattn launch completes on the actual GPU.
+COPY sageattention-2.2.0-cp312-cp312-linux_x86_64.whl /tmp/
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    git clone https://github.com/thu-ml/SageAttention.git /tmp/sageattention && \
-    git -C /tmp/sageattention checkout d1a57a546c3d395b1ffcbeecc66d81db76f3b4b5 && \
-    CUDA_HOME=/usr/local/cuda-13.0 \
-    TORCH_CUDA_ARCH_LIST="8.0;8.9;12.0" \
-    MAX_JOBS=4 \
-    pip install --no-build-isolation /tmp/sageattention && \
-    rm -rf /tmp/sageattention
+    pip install --no-deps /tmp/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl && \
+    rm /tmp/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl
 
 # RunPod SDK + runtime deps
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
