@@ -192,6 +192,42 @@ Two failure modes:
 
 `serverless-runtime/start.sh` (separate repo, pulled at cold start) currently carries one hotpatch: kijai `ComfyUI-WanAnimatePreprocess` ONNX-dropdown fix (upstream issue #32). Idempotent. To be removed once the upstream PR (bead `4bs`) is merged.
 
+## Rebuilding the SageAttention wheel
+
+`sageattention-2.2.0-cp312-cp312-linux_x86_64.whl` is committed to the repo and baked by the
+Dockerfile (COPY + `pip install --no-deps`). It is **not** compiled in CI: the sm_120 fp8
+kernels OOM-kill the CircleCI build box even at xlarge/32 GB (two confirmed `infrastructure_fail`
+runs). Build it out-of-band on a high-RAM cu130 box instead.
+
+Recipe (proven on a 2 TB-RAM H200 pod; **no GPU needed** — nvcc cross-compiles for the arch list):
+
+```bash
+# 1. CUDA 13 toolchain (matches the image base nvidia/cuda:13.0.3-cudnn-devel)
+apt-get install -y --no-install-recommends \
+  cuda-nvcc-13-0 cuda-cudart-dev-13-0 cuda-cccl-13-0 libcublas-dev-13-0 \
+  libcusparse-dev-13-0 libcusolver-dev-13-0 libcufft-dev-13-0 libcurand-dev-13-0
+#    (the cusparse/cusolver/cufft/curand -dev headers are pulled in by torch's
+#     CUDAContextLight.h — omitting them fails with "cusparse.h: No such file")
+
+# 2. cp312 venv with the EXACT torch pin from the Dockerfile
+uv venv --python 3.12 /tmp/sagebuild && . /tmp/sagebuild/bin/activate
+uv pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu130
+uv pip install setuptools wheel packaging ninja numpy
+
+# 3. Build (MAX_JOBS scaled to RAM; ';' separators; 9.0 EXCLUDED — Hopper wgmma can't
+#    assemble for sm_120a. sm_120a SASS rides inside _qattn_sm89.so, no separate module.)
+git clone https://github.com/thu-ml/SageAttention.git /tmp/sageattention
+git -C /tmp/sageattention checkout d1a57a546c3d395b1ffcbeecc66d81db76f3b4b5
+cd /tmp/sageattention
+CUDA_HOME=/usr/local/cuda-13.0 TORCH_CUDA_ARCH_LIST="8.0;8.9;12.0" MAX_JOBS=32 \
+  python setup.py bdist_wheel    # → dist/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl
+```
+
+Verify before committing: `import sageattention` succeeds, the sm89 `.so` links
+`libcudart.so.13` (NOT `.so.12` — the .12 link is the cu128-wheel-on-cu130 failure), and the
+build log shows `arch=compute_120a,code=sm_120a`. The authoritative sm_120 *kernel-launch*
+test only runs on a real RTX PRO 6000 worker via `serverless-runtime/start.sh`'s runtime gate.
+
 ## Brain
 
 Project-level brain lives in the sibling `remote_comfy_generator` repo at `docs/brain/`. Image-build/CI/Docker concerns aren't covered there yet — add an `infra/circleci.md` page if this CI workflow becomes load-bearing.

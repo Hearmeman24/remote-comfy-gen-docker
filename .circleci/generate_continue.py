@@ -50,9 +50,6 @@ executors:
     machine:
       image: ubuntu-2404:current
       docker_layer_caching: false
-    # xlarge (8 vCPU / 32 GB) — the default medium (7.5 GB) OOM-kills the
-    # SageAttention from-source nvcc compile (the build dies mid-wheel on medium).
-    resource_class: xlarge
     environment:
       DOCKER_BUILDKIT: 1
       COMPOSE_DOCKER_CLI_BUILD: 1
