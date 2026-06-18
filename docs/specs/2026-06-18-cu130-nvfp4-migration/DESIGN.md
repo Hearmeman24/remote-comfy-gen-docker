@@ -245,44 +245,75 @@ full `build-deploy-smoke` workflow goes green end-to-end.
 
 | # | Risk | Why it might bite | Detection / gate |
 |---|------|-------------------|------------------|
-| R1 | nvfp4 compact-load doesn't reproduce on torch **2.11.0**+cu130 (validation used 2.14.dev) | The fix is attributed to cu130+cuBLAS13, not torch minor — but that was inferred, not tested on 2.11.0 | **Primary gate:** a smoke preset that loads an nvfp4 `_comfy` WAN checkpoint. If VRAM/load behavior regresses (upcast) the smoke OOMs or runs heavy → caught. **Builder/breaker action item:** confirm at least one existing smoke preset exercises an nvfp4 checkpoint; if none does, that is a GAP — flag to the human, because then CI green would NOT prove the headline goal. |
+| R1 | nvfp4 compact-load doesn't reproduce on torch **2.11.0**+cu130 (validation used 2.14.dev) | The fix is attributed to cu130+cuBLAS13, not torch minor | **CLEARED by the breaker.** The nvfp4 path rides on the cuBLAS-13 FP4 kernel AND `torch.nn.functional.scaled_mm`, both present on 2.11.0+cu130: comfy-kitchen gates on `hasattr(F, "scaled_mm")` (present in 2.11), and ComfyUI's nvfp4 gate is `major >= 10` only (no torch-version check). So 2.11.0+cu130 hits the same path as the validated 2.14.dev. **Remaining gap → see "manual nvfp4 verification" below:** no CI smoke preset loads an nvfp4 WAN checkpoint (all 6 presets are bf16/fp8/gguf; the only fp4 string is LTX's text encoder, not a WAN UNET), so **CI-green does NOT prove the headline feature.** A hard manual post-rollout verification step closes this (Deploy Checklist step 5). |
 | R2 | SageAttention build fails or builds zero usable kernels on cu130 | New from-source path; arch list / no-build-isolation subtleties | Build layer fails fast (ImportError at `Dockerfile:101-108`) OR runtime probe (`start.sh:92-105`) disables the flag → worker still runs on default attn (no crash). Smoke matrix still passes functionally; perf-only loss. |
 | R3 | `was-node-suite-comfyui` (nodes.lock:31) fails to import on cu130 (1 of 28 failed on the validation pod) | Some dep incompatible with cu130/torch 2.11 | Non-fatal: ComfyUI tolerates IMPORT FAILED nodes; `start.sh` repair loop retries deps. Smoke matrix is the judge — if no shipped preset uses a `was-node-suite` class, irrelevant. **Watch item, not a blocker.** Breaker to confirm no smoke preset depends on a was-node-suite class_type. |
 | R4 | A custom node pins torch and the cu130 constraint conflicts | `/torch-constraint.txt` now carries cu130 versions | Same mechanism as today (constraint file). Node installs that fail print WARNING and continue (`Dockerfile:91`). Caught by smoke if a needed node breaks. |
 | R5 | RunPod host pool too narrow after Min-CUDA bump | Setting "Minimum CUDA 13.0" excludes hosts with driver < 580 | **Mild** — production hosts already run driver 580 (per brief). Mitigation: do the Min-CUDA bump only AFTER rollout is green (deploy checklist step). Rollback re-widens. |
 | R6 | FlashBoot warm workers keep the v26 image/wheel after deploy | FlashBoot skips `start_script.sh` cold-boot path | Known behavior. `wait_for_rollout` waits for pods on the new tag; warm v26 workers age out on true cold start. Same as every prior release. |
 
-**Acceptance = full `build-deploy-smoke` green, with R1's nvfp4-exercising preset
-confirmed present.** If R1's gap exists (no preset loads nvfp4), the human must add a
-manual nvfp4 load test before trusting v27 for the headline feature — CI green alone
-would be necessary but not sufficient.
+**Acceptance = full `build-deploy-smoke` green AND the manual nvfp4 verification
+(Deploy Checklist step 5) passes.** The breaker confirmed NO CI smoke preset loads an
+nvfp4 WAN checkpoint, so CI-green is necessary but **not sufficient** for the headline
+goal. The manual nvfp4 load test is therefore a HARD acceptance gate, not optional — see
+the Deploy Checklist.
 
 ---
 
 ## DEPLOY CHECKLIST (human executes on return — nothing here runs now)
 
-Pre-req: the implementation branch is merged to `main` of the docker repo (human's call),
-and `nodes.lock` is unchanged. The build is a no-node-bump release, so per
+The implementation lives on branch `cu130-nvfp4-migration` (single commit, NOT pushed).
+The build is a no-node-bump release (`nodes.lock` unchanged), so per
 `serverless-docker/CLAUDE.md` "Standard release":
 
-1. **Tag + push** (this triggers CircleCI; the `^v[0-9]+$` filter fires the full pipeline):
+1. **Review the diff.** `git -C serverless-docker/ diff main...cu130-nvfp4-migration` —
+   confirm: base image bump, torch family pin to the `+cu130` 2.11.0 line, Sage from-source
+   block, stale `.whl` removed, (optional) freeze.py fix. Nothing else should be touched.
+2. **Push the branch + merge to `main`** (human's call):
+   ```bash
+   git -C serverless-docker/ push origin cu130-nvfp4-migration
+   # open/merge PR into main (or fast-forward main locally), then:
+   ```
+3. **Tag + push `v27`** (this triggers CircleCI; the `^v[0-9]+$` filter fires the full pipeline):
    ```bash
    git -C serverless-docker/ tag -a v27 -m "v27 — CUDA 13.0 / torch cu130, native nvfp4 compact load; Sage rebuilt for cu130"
    git -C serverless-docker/ push origin v27
    ```
-2. **Watch the pipeline** (use the CircleCI recipes in `serverless-docker/CLAUDE.md`):
+4. **Watch the pipeline + verify the smoke matrix is fully green**
+   (use the CircleCI recipes in `serverless-docker/CLAUDE.md`):
    `build_and_push` (expect ~+5 min vs v26 for the Sage source build) →
    `update_endpoint` (PATCHes template imageName to `hearmeman/comfyui-serverless:v27`) →
    `wait_for_rollout` (polls endpoint pods onto the v27 tag, 30 min timeout) →
    `smoke_test` matrix (one job per preset) → `publish_runtime_manifest` → `notify_done`
-   (FlowBot pings on start/build/done).
-3. **Verify the smoke matrix is fully green** — especially the nvfp4-exercising preset (R1).
-   If a single preset fails, rerun-from-failed reruns only that preset (cheap), not the build.
-4. **Post-deploy RunPod setting — AFTER rollout green:** set the endpoint's
-   **"Minimum CUDA version" → 13.0** (RunPod endpoint settings UI). Do this ONLY after the
-   v27 image is live and smoke-green, so cu130 workers never land on a < 580 driver. Impact
-   is mild (production hosts already on driver 580). This is a manual UI step — it is NOT in
-   CI and NOT done by any agent.
+   (FlowBot pings on start/build/done). If a single preset fails, rerun-from-failed reruns
+   only that preset (cheap), not the build.
+5. **MANUAL nvfp4 VERIFICATION — HARD GATE, do not skip.**
+   The breaker confirmed **no CI smoke preset loads an nvfp4 WAN UNET** (all 6 presets are
+   bf16/fp8/gguf; the only `fp4` string in the manifest is LTX's text encoder, not a WAN
+   UNET). So smoke-green does NOT prove the headline nvfp4 feature works — this step is the
+   actual proof and is **required before trusting v27**.
+   - After v27 is rolled out (step 4 green), submit a **WAN 2.2 I2V** workflow to the
+     endpoint using a native **`UNETLoader`** pointed at an nvfp4 `_comfy` checkpoint —
+     e.g. `Wan2.2-I2V-A14B_NVFP4_Sparse_high_comfy.safetensors` +
+     `Wan2.2-I2V-A14B_NVFP4_Sparse_low_comfy.safetensors`, with `wan_2.1_vae` and the
+     `umt5` text encoder, on the live endpoint.
+   - **PASS criteria:** each expert loads **COMPACT (~8.4 GB VRAM/expert)** — NOT the
+     ~16 GB (fp8) or ~33 GB (fp16) upcast — and the generation **completes**. Compact load
+     + successful gen is the proof nvfp4 did NOT silently fall back (ComfyUI bug #11864).
+   - **FAIL (upcasts to ~16/33 GB, OOMs, or errors):** nvfp4 is not working on v27 →
+     **ROLLBACK to v26** (below). Do not leave production on a half-working image where the
+     headline feature silently degrades.
+6. **Post-deploy RunPod setting — AFTER step 5 passes:** set the endpoint's
+   **"Minimum CUDA version" → 13.0** (RunPod endpoint settings UI). Do this ONLY after v27
+   is live and nvfp4-verified, so cu130 workers never land on a < 580 driver. Impact is mild
+   (production hosts already on driver 580). Manual UI step — NOT in CI, NOT done by any agent.
+7. **Brain-sync the staled gotcha page.** The v26 gotcha
+   `docs/brain/pages/gotcha/sageattention-cu128-blackwell-build.md` now describes a
+   superseded reality (cu128 pin, baked wheel, Min-CUDA 12.8). After v27 is live, update it
+   (or add a cu130 successor page) so the brain reflects: cu130 base, Sage built from source,
+   torch 2.11.0+cu130, Min-CUDA 13.0. Run the `brain-sync` skill / bump `updated:` to today.
+   Cite this spec. (Per the brain invariants — every page edit bumps `updated:`, new pages
+   land in `MOC.md`.)
 
 ## ROLLBACK
 
@@ -302,22 +333,26 @@ If v27 is bad in production:
 
 ---
 
-## OPEN ITEMS for the breaker / builders (attack the design on paper)
+## OPEN ITEMS — RESOLVED by the breaker (2026-06-18)
 
-1. **R1 is the load-bearing assumption.** I claim torch 2.11.0+cu130 reproduces the
-   compact nvfp4 load that was validated on nightly 2.14.dev+cu130, on the theory that the
-   fix is cuBLAS-13/CUDA-major-driven, not torch-minor-driven. **Breaker: can you falsify
-   that?** Is there a torch-2.12+ change (not in 2.11) that the nvfp4 path depends on? If so,
-   we have a real problem — torchaudio cu130 caps at 2.11.0, so we can't have both
-   torch ≥ 2.12 AND a coherent torchaudio. (Possible escape hatch if needed: drop torchaudio
-   entirely if no shipped preset's audio path uses it — but that needs proof and is out of
-   scope unless R1 forces it.)
-2. **R1 gate existence.** Builder/breaker: confirm at least one blockflow smoke preset
-   actually loads an nvfp4 `_comfy` checkpoint. If not, CI green ≠ goal met.
-3. **Sage build invocation.** Builder: does `pip install <sagedir>` at SHA `d1a57a5` invoke
-   the nvcc build, or is `setup.py install` required? Confirm before building. Confirm the
-   canonical remote for the SHA.
-4. **`--no-build-isolation` torch visibility.** Confirm the build sees the installed
-   torch 2.11.0+cu130 (it must, for ABI match).
-5. **freeze.py fix scope.** Builder: is the parser fix a clean 2-line retarget, or does it
-   deserve its own PR + test? Either is fine — just don't gate cu130 on it.
+These were posed as paper-attack questions; the breaker has answered them. Recorded here so
+the *why* survives.
+
+1. **R1 (torch 2.11.0 vs 2.14.dev for nvfp4) — CLEARED.** The nvfp4 path rides on the
+   cuBLAS-13 FP4 kernel AND `torch.nn.functional.scaled_mm`, both present on 2.11.0+cu130.
+   comfy-kitchen gates on `hasattr(F, "scaled_mm")` (present in 2.11); ComfyUI's nvfp4 gate
+   is `major >= 10` only (no torch-version check). No torch-2.12+ dependency exists, so the
+   torchaudio-cu130-caps-at-2.11 constraint is NOT in tension with the feature. The "drop
+   torchaudio" escape hatch is unnecessary — do not pursue it.
+2. **nvfp4 smoke-preset existence — CONFIRMED ABSENT (gap closed by process).** No CI smoke
+   preset loads an nvfp4 WAN UNET (6 presets bf16/fp8/gguf; only fp4 string is LTX's text
+   encoder). CI-green ≠ goal-met. Closed by the **HARD manual nvfp4 verification** in Deploy
+   Checklist step 5, now an acceptance gate.
+3. **Sage build invocation & canonical remote — builder to confirm at build time** (item
+   retained in Change 3's builder notes; either `pip install <dir>` or `setup.py install` is
+   acceptable, env vars + SHA are load-bearing). No defect found in the proposed block.
+4. **`--no-build-isolation` torch visibility — sound** (the build must see the installed
+   torch 2.11.0+cu130 for ABI match; that's exactly why isolation is disabled).
+5. **freeze.py fix — builder's branch includes it; no Dockerfile defects found.** Architect
+   still signs off on the exact parser change semantics before merge (release-tool source of
+   truth). Splitting to a follow-up remains acceptable.
