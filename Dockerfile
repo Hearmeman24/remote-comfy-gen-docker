@@ -82,6 +82,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     git -C /tmp/sageattention checkout d1a57a546c3d395b1ffcbeecc66d81db76f3b4b5 && \
     CUDA_HOME=/usr/local/cuda-13.0 \
     TORCH_CUDA_ARCH_LIST="8.0;8.9;12.0" \
+    MAX_JOBS=4 \
     pip install --no-build-isolation /tmp/sageattention && \
     rm -rf /tmp/sageattention
 
