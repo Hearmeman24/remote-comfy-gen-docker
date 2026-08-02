@@ -1,14 +1,12 @@
 # .circleci/config.yml — SETUP config for dynamic config.
-# The setup workflow fetches the blockflow-presets manifest, generates the real
-# pipeline config (with the smoke_test matrix expanded from the live preset list),
-# and uses the circleci/continuation orb to trigger it. The continuation config
-# (see generate_continue.py) builds + pushes the docker image, rolls the endpoint
-# over, waits for the rollout, runs the smoke matrix, then notifies.
+# The setup workflow generates the real pipeline config and uses the
+# circleci/continuation orb to trigger it. The continuation config (see
+# generate_continue.py) builds + pushes the docker image, rolls the endpoint
+# over, waits for the rollout, publishes the runtime manifest, then notifies.
 #
-# Why dynamic: matrix-per-preset must be expanded at pipeline time so each preset
-# runs as its own job (rerun-from-failed reruns only the failed preset, not the
-# image build). The preset list comes from the registry's manifest.json so we
-# don't have to hardcode it here.
+# The per-preset smoke matrix that made this config dynamic was removed in
+# HEA-82, so nothing is expanded at pipeline time any more and this split could
+# be collapsed back into a single static config.
 
 version: 2.1
 setup: true
