@@ -9,6 +9,7 @@ network_volume:
     controlnet: controlnet
     diffusion_models: diffusion_models
     embeddings: embeddings
+    frame_interpolation: frame_interpolation
     loras: loras
     style_models: style_models
     text_encoders: text_encoders
