@@ -40,7 +40,15 @@ def test_render_round_trips_to_disk() -> None:
     assert freeze.render(entries) == freeze.LOCKFILE.read_text()
 
 
+def test_upscale_node_pack_is_baked() -> None:
+    """HearmemanAI-UpscaleModel replaces core's ImageUpscaleWithModel and must ship
+    in the image, not be cold-start cloned by the runtime installer."""
+    url = "https://github.com/Hearmeman24/ComfyUI-HearmemanAI-Upscale.git"
+    assert url in freeze.parse_locked_repos(), f"{url} missing from nodes.lock"
+
+
 if __name__ == "__main__":
     test_parses_all_custom_nodes_excluding_core()
     test_render_round_trips_to_disk()
+    test_upscale_node_pack_is_baked()
     print("ok: freeze.py parses nodes.lock as canonical and round-trips")
