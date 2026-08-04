@@ -10,10 +10,12 @@ Run: python3 scripts/test_freeze.py
 """
 
 import sys
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import freeze  # noqa: E402
+import write_runtime_manifest  # noqa: E402
 
 
 def test_parses_all_custom_nodes_excluding_core() -> None:
@@ -47,8 +49,37 @@ def test_upscale_node_pack_is_baked() -> None:
     assert url in freeze.parse_locked_repos(), f"{url} missing from nodes.lock"
 
 
+def test_comfyui_pin_ships_minimax_h3() -> None:
+    """The pinned ComfyUI core SHA must carry the MiniMax H3 nodes.
+
+    H3 support (comfy_extras/nodes_minimax_h3.py) landed in ComfyUI v0.30.0 via
+    PR #15224. Nothing else in the image provides those node classes, so a pin
+    older than that ships an image where every H3 workflow fails to load.
+    Hits the network — the lockfile records a SHA, not a tree.
+    """
+    sha = write_runtime_manifest.read_comfyui_sha()
+    url = (
+        "https://raw.githubusercontent.com/comfyanonymous/ComfyUI/"
+        f"{sha}/comfy_extras/nodes_minimax_h3.py"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            source = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise AssertionError(
+                f"ComfyUI @ {sha} has no comfy_extras/nodes_minimax_h3.py — "
+                "pin predates v0.30.0"
+            ) from None
+        raise
+    for cls in ("EmptyMiniMaxH3LatentAV", "MiniMaxH3ImageToVideo",
+                "MiniMaxH3ReferenceToVideo", "MiniMaxH3SigmaShift"):
+        assert f"class {cls}(" in source, f"{cls} missing from ComfyUI @ {sha}"
+
+
 if __name__ == "__main__":
     test_parses_all_custom_nodes_excluding_core()
     test_render_round_trips_to_disk()
     test_upscale_node_pack_is_baked()
+    test_comfyui_pin_ships_minimax_h3()
     print("ok: freeze.py parses nodes.lock as canonical and round-trips")
