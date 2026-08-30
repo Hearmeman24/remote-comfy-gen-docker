@@ -9,8 +9,9 @@ These tests pin nodes.lock as the canonical source of the node list.
 Run: python3 scripts/test_freeze.py
 """
 
+import json
+import re
 import sys
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -18,16 +19,17 @@ import freeze  # noqa: E402
 import write_runtime_manifest  # noqa: E402
 
 
-def test_parses_all_custom_nodes_excluding_core() -> None:
+def test_parses_all_child_owned_custom_nodes() -> None:
     repos = freeze.parse_locked_repos()
     lock_lines = [
         ln for ln in freeze.LOCKFILE.read_text().splitlines()
         if ln.strip() and not ln.startswith("#")
     ]
-    expected = [ln.split()[0] for ln in lock_lines if ln.split()[0] != freeze.COMFYUI_REPO_URL]
+    expected = [ln.split()[0] for ln in lock_lines]
     assert repos == expected, f"parsed {len(repos)} repos, expected {len(expected)}"
     assert repos, "parser returned zero repos — would empty nodes.lock on freeze"
-    assert freeze.COMFYUI_REPO_URL not in repos, "ComfyUI core must be captured separately"
+    assert freeze.COMFYUI_REPO_URL not in repos, "ComfyUI core belongs to the father image"
+    assert freeze.MANAGER_REPO_URL not in repos, "ComfyUI-Manager belongs to the father image"
 
 
 def test_render_round_trips_to_disk() -> None:
@@ -50,36 +52,29 @@ def test_upscale_node_pack_is_baked() -> None:
 
 
 def test_comfyui_pin_ships_minimax_h3() -> None:
-    """The pinned ComfyUI core SHA must carry the MiniMax H3 nodes.
+    """The father image's ComfyUI ref must carry the MiniMax H3 nodes.
 
-    H3 support (comfy_extras/nodes_minimax_h3.py) landed in ComfyUI v0.30.0 via
-    PR #15224. Nothing else in the image provides those node classes, so a pin
-    older than that ships an image where every H3 workflow fails to load.
-    Hits the network — the lockfile records a SHA, not a tree.
+    H3 support landed in ComfyUI v0.30.0. The father tag is the single version
+    source, so reject any older ComfyUI coordinate without reaching the network.
     """
-    sha = write_runtime_manifest.read_comfyui_sha()
-    url = (
-        "https://raw.githubusercontent.com/comfyanonymous/ComfyUI/"
-        f"{sha}/comfy_extras/nodes_minimax_h3.py"
-    )
-    try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
-            source = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            raise AssertionError(
-                f"ComfyUI @ {sha} has no comfy_extras/nodes_minimax_h3.py — "
-                "pin predates v0.30.0"
-            ) from None
-        raise
-    for cls in ("EmptyMiniMaxH3LatentAV", "MiniMaxH3ImageToVideo",
-                "MiniMaxH3ReferenceToVideo", "MiniMaxH3SigmaShift"):
-        assert f"class {cls}(" in source, f"{cls} missing from ComfyUI @ {sha}"
+    base = write_runtime_manifest.read_base_image()
+    match = re.search(r"-comfy(\d+)\.(\d+)\.(\d+)-", base)
+    assert match, f"base image does not expose its ComfyUI version: {base}"
+    assert tuple(map(int, match.groups())) >= (0, 30, 0), base
+
+
+def test_runtime_manifest_reports_father_image() -> None:
+    base = write_runtime_manifest.read_base_image()
+    manifest = json.loads(write_runtime_manifest.render_manifest("v35", base))
+    section = manifest["comfygen_serverless"]
+    assert section["base_image"] == base
+    assert "comfyui_sha" not in section
 
 
 if __name__ == "__main__":
-    test_parses_all_custom_nodes_excluding_core()
+    test_parses_all_child_owned_custom_nodes()
     test_render_round_trips_to_disk()
     test_upscale_node_pack_is_baked()
     test_comfyui_pin_ships_minimax_h3()
+    test_runtime_manifest_reports_father_image()
     print("ok: freeze.py parses nodes.lock as canonical and round-trips")

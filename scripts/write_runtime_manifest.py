@@ -15,10 +15,12 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-LOCKFILE = REPO_ROOT / "nodes.lock"
-COMFYUI_REPO_URL = "https://github.com/comfyanonymous/ComfyUI.git"
+PINS_FILE = REPO_ROOT / "pins.json"
 IMAGE_REPOSITORY = "hearmeman/comfyui-serverless"
 TAG_RE = re.compile(r"^v\d+$")
+BASE_IMAGE_RE = re.compile(
+    r"^hearmeman/comfyui-base:cu130-comfy[^-]+-torch[^\s]+$"
+)
 
 REQUIRED_CLASSES = [
     "ModelNoiseScale",
@@ -27,18 +29,15 @@ REQUIRED_CLASSES = [
 ]
 
 
-def read_comfyui_sha(lockfile: Path = LOCKFILE) -> str:
-    for line in lockfile.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        parts = stripped.split()
-        if len(parts) == 2 and parts[0] == COMFYUI_REPO_URL:
-            return parts[1]
-    raise RuntimeError(f"{COMFYUI_REPO_URL} not found in {lockfile}")
+def read_base_image(pins_file: Path = PINS_FILE) -> str:
+    pins = json.loads(pins_file.read_text(encoding="utf-8"))
+    base_image = pins.get("base_image") if isinstance(pins, dict) else None
+    if not isinstance(base_image, str) or not BASE_IMAGE_RE.fullmatch(base_image):
+        raise RuntimeError(f"invalid base_image in {pins_file}: {base_image!r}")
+    return base_image
 
 
-def render_manifest(tag: str, comfyui_sha: str) -> str:
+def render_manifest(tag: str, base_image: str) -> str:
     if not TAG_RE.match(tag):
         raise ValueError(f"tag must match v<N>, got {tag!r}")
     manifest = {
@@ -47,7 +46,7 @@ def render_manifest(tag: str, comfyui_sha: str) -> str:
             "channel": "stable",
             "image": f"{IMAGE_REPOSITORY}:{tag}",
             "tag": tag,
-            "comfyui_sha": comfyui_sha,
+            "base_image": base_image,
             "required_classes": REQUIRED_CLASSES,
         },
     }
@@ -66,8 +65,8 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        manifest = render_manifest(args.tag, read_comfyui_sha())
-    except (OSError, RuntimeError, ValueError) as exc:
+        manifest = render_manifest(args.tag, read_base_image())
+    except (json.JSONDecodeError, OSError, RuntimeError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
 

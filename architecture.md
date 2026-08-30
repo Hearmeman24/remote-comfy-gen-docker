@@ -4,34 +4,31 @@
 
 ## Overview
 
-Agent-first CLI for executing ComfyUI workflows on remote RunPod serverless endpoints. Two-repo design separates the infrequently-changing Docker image from the frequently-changing runtime handler.
+Agent-first CLI for executing ComfyUI workflows on remote RunPod serverless endpoints. The image inherits the same shared ComfyUI father used by every HearmemanAI pod template, while the serverless handler remains independently hot-loaded at boot.
 
 ## Repository Structure
 
 | Repo | Path | Purpose | Tag strategy |
 |------|------|---------|--------------|
-| `serverless-docker` | `serverless-docker/` | Docker image: ComfyUI + baked custom nodes | Version tags (v10, v11, v12…) |
+| `comfyui-runtime` | `../comfyui-runtime/` | Father image: CUDA + Python + Torch + ComfyUI + SageAttention + shared tools | Immutable ABI-bearing base tags |
+| `serverless-docker` | `serverless-docker/` | Thin child image: serverless nodes + RunPod bootstrap | Version tags (v10, v11, v12…) |
 | `serverless-runtime` | `serverless-runtime/` | RunPod handler + startup scripts | Branch push only (no tags) |
 | `comfy_gen` | `comfy_gen/` | CLI tool (`pip install -e .`) | — |
 
 ## Docker Image (`serverless-docker`)
 
 ### Base
-- CUDA base image + ComfyUI cloned to `/ComfyUI` (baked, not deleted)
-- SageAttention + RunPod SDK installed
+- `pins.json` selects the same `hearmeman/comfyui-base` father as the pod templates.
+- The father supplies CUDA, Python, Torch, ComfyUI at `/ComfyUI`, SageAttention, ComfyUI-Manager, and the CivitAI downloader.
+- This child adds the RunPod SDK, serverless-only system libraries, locked custom nodes, model-path configuration, and `start_script.sh`.
+- The inherited lowercase `comfyui-manager` directory is renamed to the historical uppercase `ComfyUI-Manager` path expected by the serverless handler; Manager is not installed twice.
 
-### Baked Custom Nodes (25 nodes, added v11)
-All cloned to `/ComfyUI/custom_nodes/` at build time with `--constraint /torch-constraint.txt`:
-
-```
-ComfyLiterals, ComfyUI-Easy-Use, ComfyUI-Frame-Interpolation, ComfyUI-KJNodes,
-ComfyUI-Logic, ComfyUI-Manager, ComfyUI-Openrouter_node, ComfyUI-VideoHelperSuite,
-ComfyUI-WanAnimate-Enhancer, ComfyUI-WanAnimatePreprocess, ComfyUI-WanVideoWrapper,
-ComfyUI-segment-anything-2, ComfyUI_Comfyroll_CustomNodes, ComfyUI_JPS-Nodes,
-ComfyUI_LayerStyle, ComfyUI_Swwan, ComfyUI_UltimateSDUpscale, ComfyUI_essentials,
-RES4LYF, cg-image-picker, cg-use-everywhere, comfy-plasma, comfyui_controlnet_aux,
-mikey_nodes, rgthree-comfy, was-node-suite-comfyui
-```
+### Baked Custom Nodes
+All child-owned entries in `nodes.lock` are cloned to
+`/ComfyUI/custom_nodes/` at build time. The father's global
+`PIP_CONSTRAINT=/torch-constraint.txt` protects the inherited Torch ABI during
+their dependency installs. ComfyUI core and ComfyUI-Manager do not belong in
+the child lock.
 
 **Critical constraint**: Do NOT bake `onnxruntime-gpu` — it causes segfaults in RunPod's cpuset-constrained containers (root cause of v8 crash-loop). Use `onnxruntime` (CPU-only) if needed.
 
@@ -104,7 +101,8 @@ receive job
 
 | Technique | Impact | Status |
 |-----------|--------|--------|
-| Bake 25 custom nodes into Docker image | ~58s → ~5s ComfyUI startup | **Done (v11)** |
+| Bake locked custom nodes into Docker image | ~58s → ~5s ComfyUI startup | **Done (v11)** |
+| Inherit the family-wide ComfyUI father image | One CUDA/Python/Torch/Sage owner | **Done (unreleased)** |
 | Bake node deps with torch constraints | No pip install on cold start | **Done (v11)** |
 | Pre-flight node check (before ComfyUI starts) | Eliminates observe-error-restart cycle | **Done** |
 | `sed` patch for extra_model_paths.yaml | Config changes without Docker rebuild | **Done (v12)** |

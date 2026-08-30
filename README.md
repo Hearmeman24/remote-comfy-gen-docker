@@ -4,11 +4,27 @@ Run any ComfyUI workflow on RunPod serverless. Send a workflow JSON, get back ou
 
 ## What's Included
 
-- **CUDA 12.8.1** + Ubuntu 24.04 + Python 3.12
-- **ComfyUI** with full ML stack (PyTorch, safetensors, transformers, SageAttention)
-- **25 custom nodes baked in** — WanVideoWrapper, KJNodes, VideoHelperSuite, ComfyUI-Manager, essentials, controlnet_aux, RES4LYF, and more
+- **Shared father image** — the exact `hearmeman/comfyui-base` release in `pins.json`
+- **Inherited GPU stack** — CUDA 13.0, Python 3.12, Torch 2.11, ComfyUI 0.32, SageAttention, and ComfyUI-Manager
+- **Serverless custom nodes baked in** — WanVideoWrapper, KJNodes, VideoHelperSuite, essentials, controlnet_aux, RES4LYF, and the rest of `nodes.lock`
 - **Auto custom node installer** — missing nodes are detected, installed, and loaded automatically
 - **Metadata stripping** — output files have embedded workflow data removed
+
+## Father Image
+
+This image does not maintain its own CUDA, Python, Torch, ComfyUI, or
+SageAttention installation. Those are owned by
+`Hearmeman24/comfyui-runtime/base/Dockerfile`, exactly like the pod templates.
+The serverless repository owns only its custom nodes and RunPod startup layer.
+
+To upgrade the whole ComfyUI family:
+
+1. Change and validate the father Dockerfile and its Torch/Sage pins.
+2. Publish the new immutable `hearmeman/comfyui-base` tag.
+3. Advance each child's `base_image` pointer and rebuild it.
+
+The shared versions change only in the father. Child Dockerfiles never repeat
+or independently select those versions.
 
 ## Environment Variables
 
