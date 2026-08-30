@@ -49,6 +49,27 @@ def test_generation_needs_no_network() -> None:
     assert "\nimport urllib" not in source, "generation should no longer reach the network"
 
 
+def test_worker_build_uses_base_image_from_pins() -> None:
+    config = generated()
+    command = next(
+        step["run"]["command"]
+        for step in config["jobs"]["build_and_push"]["steps"]
+        if isinstance(step, dict)
+        and "run" in step
+        and step["run"].get("name", "").startswith("Build & push ComfyUI")
+    )
+    assert "json.load(open('pins.json'))" in command
+    assert '--build-arg BASE_IMAGE="${BASE_IMAGE}"' in command
+
+
+def test_worker_build_waits_for_contract_verification() -> None:
+    config = generated()
+    jobs = config["workflows"]["build-deploy"]["jobs"]
+    named = {list(job)[0]: list(job.values())[0] for job in jobs}
+    assert "verify" in named
+    assert named["build_and_push"]["requires"] == ["verify"]
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

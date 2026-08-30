@@ -67,6 +67,22 @@ commands:
             comfy-gen --help >/dev/null
 
 jobs:
+  verify:
+    executor: python
+    steps:
+      - checkout
+      - run:
+          name: Install test dependencies
+          command: pip install --quiet pyyaml
+      - run:
+          name: Verify shared-base and release contracts
+          command: |
+            python3 scripts/test_image_contract.py
+            python3 scripts/test_freeze.py
+            python3 .circleci/test_generate_continue.py
+            python3 -m json.tool pins.json >/dev/null
+            find scripts -name '*.py' -print0 | xargs -0 -r python3 -m py_compile
+
   build_and_push:
     executor: docker-dind
     steps:
@@ -91,18 +107,23 @@ jobs:
           name: Build & push ComfyUI serverless image (with registry cache)
           # --cache-to/--cache-from with mode=max exports every intermediate layer
           # to docker.io/$DOCKERHUB_USER/comfyui-serverless:buildcache. A no-op
-          # rebuild of an unchanged tree hits the cache for every layer and finishes
-          # in ~3 min instead of ~13. A single-node-bump rebuild hits cache for apt,
-          # ComfyUI core, sageattention, runpod deps, and re-runs only the node-loop
-          # layer plus verify+CivitAI+volatile COPYs downstream of nodes.lock.
+          # rebuild of an unchanged tree hits the cache for every layer. Father
+          # layers are reused directly; a node bump re-runs only child layers.
           command: |
             TAG="${{CIRCLE_TAG:-latest}}"
             IMG="docker.io/$DOCKERHUB_USER/comfyui-serverless"
             CACHE_REF="${{IMG}}:buildcache"
+            BASE_IMAGE=$(python3 -c "import json; print(json.load(open('pins.json')).get('base_image', ''))")
+            if [ -z "$BASE_IMAGE" ]; then
+              echo "FATAL: pins.json has no base_image"
+              exit 1
+            fi
+            echo "Building FROM $BASE_IMAGE"
             docker buildx build \\
               --progress=plain \\
               --cache-to "type=registry,ref=${{CACHE_REF}},mode=max" \\
               --cache-from "type=registry,ref=${{CACHE_REF}}" \\
+              --build-arg BASE_IMAGE="${{BASE_IMAGE}}" \\
               -t "${{IMG}}:${{TAG}}" \\
               --push \\
               .
@@ -293,8 +314,11 @@ workflows:
 
   build-deploy:
     jobs:
+      - verify:
+          filters: {{ tags: {{ only: "/^v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
       - build_and_push:
           context: [docker-hub, flowbot-webhook-token]
+          requires: [verify]
           filters: {{ tags: {{ only: "/^v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
       - update_endpoint:
           context: [docker-hub]
