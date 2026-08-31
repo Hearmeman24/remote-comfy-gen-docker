@@ -5,3 +5,5 @@ __pycache__/
 *.egg-info/
 *.whl
 CLAUDE.md
+/docs/specs/
+/issues.md
