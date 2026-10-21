@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parent.parent
 DOCKERFILE = ROOT / "Dockerfile"
 PINS = ROOT / "pins.json"
 LOCKFILE = ROOT / "nodes.lock"
+EXTRA_MODEL_PATHS = ROOT / "extra_model_paths.yaml"
+START_SCRIPT = ROOT / "start_script.sh"
 
 COMFYUI_REPO = "https://github.com/comfyanonymous/ComfyUI.git"
 MANAGER_REPO = "https://github.com/ltdrdata/ComfyUI-Manager.git"
@@ -80,6 +82,44 @@ def test_build_verifies_and_logs_inherited_comfyui_version_and_commit() -> None:
     assert 'Path("/comfyui-approved-ref")' in source
     assert 'f"{approved}^{{commit}}"' in source
     assert "if head != resolved:" in source
+
+
+def test_all_supplied_workflow_node_packs_have_immutable_pins() -> None:
+    expected = {
+        "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git":
+            "4490bd1f482e026674543386bb2a4d176da245b9",
+        "https://github.com/Jonseed/ComfyUI-Detail-Daemon.git":
+            "3394e44afea04ed0188fb37b21f0d9952469766b",
+        "https://github.com/Hearmeman24/ComfyUI-OpenRouter-Simple.git":
+            "79a217c596f808a133305a9e9cb7c49cda6bc184",
+    }
+    locked = {
+        line.split()[0]: line.split()[1]
+        for line in LOCKFILE.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    for url, sha in expected.items():
+        assert locked.get(url) == sha, f"missing or changed immutable pin: {url}"
+        assert re.fullmatch(r"[0-9a-f]{40}", locked[url])
+
+
+def test_workflow_model_categories_resolve_to_network_volume() -> None:
+    source = EXTRA_MODEL_PATHS.read_text(encoding="utf-8")
+    assert "base_path: /runpod-volume/ComfyUI/models" in source
+    assert re.search(r"^\s+seedvr2: SEEDVR2$", source, re.MULTILINE)
+    assert re.search(r"^\s+vae_approx: vae_approx$", source, re.MULTILINE)
+    dockerfile = _dockerfile()
+    assert "ENV AUX_ANNOTATOR_CKPTS_PATH=/runpod-volume/ComfyUI/models/annotator_ckpts" in dockerfile
+
+
+def test_runtime_checkout_is_container_local_and_keeps_credentials_out_of_git_config() -> None:
+    source = START_SCRIPT.read_text(encoding="utf-8")
+    assert 'RUNTIME_DIR="/opt/comfygen-runtime"' in source
+    assert 'RUNTIME_DIR="/runpod-volume/' not in source
+    assert 'RUNTIME_REPO_REF="${RUNTIME_REPO_REF:-main}"' in source
+    assert 'git remote set-url origin "$RUNTIME_REPO_URL"' in source
+    assert 'git_with_pat clone --depth 1 --branch "$RUNTIME_REPO_REF" "$RUNTIME_REPO_URL"' in source
+    assert "unset GITHUB_PAT" in source
 
 
 if __name__ == "__main__":

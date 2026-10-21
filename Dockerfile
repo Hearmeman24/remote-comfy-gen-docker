@@ -11,6 +11,9 @@ ARG BASE_IMAGE
 LABEL org.hearmemanai.comfyui.base-image="${BASE_IMAGE}"
 
 ENV PYTHONDONTWRITEBYTECODE=1
+# ComfyUI-ControlNet-Aux caches HF annotator assets under <repo id>/<filename>.
+# The global volume preloads the exact DWPreprocessor models at these paths.
+ENV AUX_ANNOTATOR_CKPTS_PATH=/runpod-volume/ComfyUI/models/annotator_ckpts
 
 # Libraries required by the broad serverless custom-node set but not by every
 # ComfyUI child. CUDA, Python, compilers, git, ffmpeg, and aria2 are inherited.
@@ -35,6 +38,8 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 # Child-owned custom nodes only. The inherited PIP_CONSTRAINT points at the
 # father's /torch-constraint.txt, so node requirements cannot replace the
 # father-owned Torch family.
+# The workflow-critical additions below must install their declared requirements
+# successfully; optional pack dependency failures retain the warning path.
 COPY nodes.lock /nodes.lock
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     set -e; \
@@ -46,14 +51,31 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
       echo "=== Installing $repo_dir @ $sha ==="; \
       git clone --filter=blob:none "$url" "$repo_dir"; \
       git -C "$repo_dir" checkout "$sha"; \
+      required_workflow_node=false; \
+      case "$repo_dir" in \
+        ComfyUI-SeedVR2_VideoUpscaler|ComfyUI-Detail-Daemon|ComfyUI-OpenRouter-Simple) \
+          required_workflow_node=true; \
+          test -f "/ComfyUI/custom_nodes/$repo_dir/requirements.txt" || { \
+            echo "FATAL: required workflow node $repo_dir has no requirements.txt"; \
+            exit 1; \
+          } ;; \
+      esac; \
       if [ -f "/ComfyUI/custom_nodes/$repo_dir/requirements.txt" ]; then \
-        pip install -r "/ComfyUI/custom_nodes/$repo_dir/requirements.txt" || \
-          echo "WARNING: some deps failed for $repo_dir (continuing)"; \
+        if [ "$required_workflow_node" = true ]; then \
+          pip install -r "/ComfyUI/custom_nodes/$repo_dir/requirements.txt"; \
+        else \
+          pip install -r "/ComfyUI/custom_nodes/$repo_dir/requirements.txt" || \
+            echo "WARNING: some deps failed for $repo_dir (continuing)"; \
+        fi; \
       fi; \
       if [ -f "/ComfyUI/custom_nodes/$repo_dir/install.py" ]; then \
-        cd "/ComfyUI/custom_nodes/$repo_dir" && \
-        python install.py || \
-          echo "WARNING: install.py failed for $repo_dir (continuing)"; \
+        cd "/ComfyUI/custom_nodes/$repo_dir"; \
+        if [ "$required_workflow_node" = true ]; then \
+          python install.py; \
+        else \
+          python install.py || \
+            echo "WARNING: install.py failed for $repo_dir (continuing)"; \
+        fi; \
       fi; \
     done < /nodes.lock
 

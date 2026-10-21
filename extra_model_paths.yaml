@@ -12,9 +12,11 @@ network_volume:
     frame_interpolation: frame_interpolation
     loras: loras
     style_models: style_models
+    seedvr2: SEEDVR2
     text_encoders: text_encoders
     unet: unet
     upscale_models: upscale_models
     latent_upscale_models: latent_upscale_models
     detection: detection
     vae: vae
+    vae_approx: vae_approx
