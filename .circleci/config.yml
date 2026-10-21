@@ -1,0 +1,43 @@
+# .circleci/config.yml — SETUP config for dynamic config.
+# The setup workflow generates the real pipeline config and uses the
+# circleci/continuation orb to trigger it. The continuation config (see
+# generate_continue.py) builds + pushes the docker image, rolls the endpoint
+# over, waits for the rollout, publishes the runtime manifest, then notifies.
+#
+# The per-preset smoke matrix that made this config dynamic was removed in
+# HEA-82, so nothing is expanded at pipeline time any more and this split could
+# be collapsed back into a single static config.
+
+version: 2.1
+setup: true
+
+orbs:
+  continuation: circleci/continuation@1.0.0
+
+jobs:
+  setup:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Generate continuation config
+          command: |
+            python3 .circleci/generate_continue.py > /tmp/continue.yml
+            echo "--- generated continue.yml (first 80 lines) ---"
+            head -80 /tmp/continue.yml
+      - continuation/continue:
+          configuration_path: /tmp/continue.yml
+
+workflows:
+  setup:
+    jobs:
+      - setup:
+          filters:
+            tags:
+              # Match worker tags (vN), build-only tags (build-vN), installer tags (installer-vN), and
+              # manifest-test-vN dry-run tags. The continuation YAML routes each
+              # to the right workflow via its own tag filter.
+              only: /^((installer-|build-)?v[0-9]+|manifest-test-v[0-9]+)$/
+            branches:
+              ignore: /.*/
