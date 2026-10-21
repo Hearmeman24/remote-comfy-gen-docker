@@ -35,9 +35,9 @@ workflows:
       - setup:
           filters:
             tags:
-              # Match worker tags (vN), installer tags (installer-vN), and
+              # Match worker tags (vN), build-only tags (build-vN), installer tags (installer-vN), and
               # manifest-test-vN dry-run tags. The continuation YAML routes each
               # to the right workflow via its own tag filter.
-              only: /^((installer-)?v[0-9]+|manifest-test-v[0-9]+)$/
+              only: /^((installer-|build-)?v[0-9]+|manifest-test-v[0-9]+)$/
             branches:
               ignore: /.*/

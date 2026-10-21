@@ -78,12 +78,17 @@ jobs:
           name: Verify shared-base and release contracts
           command: |
             python3 scripts/test_image_contract.py
+            python3 scripts/test_write_runtime_manifest.py
             python3 scripts/test_freeze.py
             python3 .circleci/test_generate_continue.py
             python3 -m json.tool pins.json >/dev/null
             find scripts -name '*.py' -print0 | xargs -0 -r python3 -m py_compile
 
   build_and_push:
+    parameters:
+      build_only:
+        type: boolean
+        default: false
     executor: docker-dind
     steps:
       - checkout
@@ -95,8 +100,12 @@ jobs:
           name: Get commit info
           command: |
             echo "export COMMIT_MSG=\\"$(git log -1 --pretty=%s | tr '\"' \"'\" )\\"" >> "$BASH_ENV"
-      - notify-flowbot:
-          message: "Tell me that the comfyui-serverless:${{CIRCLE_TAG:-latest}} Docker build has started. Commit ${{CIRCLE_SHA1:0:7}}: ${{COMMIT_MSG}}"
+      - when:
+          condition:
+            equal: [false, << parameters.build_only >>]
+          steps:
+            - notify-flowbot:
+                message: "Tell me that the comfyui-serverless:${{CIRCLE_TAG:-latest}} Docker build has started. Commit ${{CIRCLE_SHA1:0:7}}: ${{COMMIT_MSG}}"
       - run:
           name: Set up buildx (docker-container driver, required for registry cache)
           command: |
@@ -111,6 +120,13 @@ jobs:
           # layers are reused directly; a node bump re-runs only child layers.
           command: |
             TAG="${{CIRCLE_TAG:-latest}}"
+            if [ "<< parameters.build_only >>" = "true" ]; then
+              if [[ ! "$TAG" =~ ^build-v[0-9]+$ ]]; then
+                echo "FATAL: build-only jobs require a build-v<N> tag, got $TAG"
+                exit 1
+              fi
+              TAG="${{TAG#build-}}"
+            fi
             IMG="docker.io/$DOCKERHUB_USER/comfyui-serverless"
             CACHE_REF="${{IMG}}:buildcache"
             BASE_IMAGE=$(python3 -c "import json; print(json.load(open('pins.json')).get('base_image', ''))")
@@ -128,23 +144,27 @@ jobs:
               --push \\
               .
             touch /tmp/build_success
-      - run:
-          name: Notify FlowBot — build complete
-          when: always
-          command: |
-            TAG="${{CIRCLE_TAG:-latest}}"
-            if [ -z "$FLOWBOT_WEBHOOK_URL" ] || [ -z "$FLOWBOT_WEBHOOK_TOKEN" ]; then
-              exit 0
-            fi
-            if [ -f /tmp/build_success ]; then
-              MSG="Tell me that the comfyui-serverless:${{TAG}} Docker build succeeded and was pushed to Docker Hub. Commit ${{CIRCLE_SHA1:0:7}}: ${{COMMIT_MSG}}"
-            else
-              MSG="Tell me that the comfyui-serverless:${{TAG}} Docker build failed. Commit ${{CIRCLE_SHA1:0:7}}: ${{COMMIT_MSG}}. Logs: ${{CIRCLE_BUILD_URL}}"
-            fi
-            curl -s -X POST "${{FLOWBOT_WEBHOOK_URL}}/hooks/agent" \\
-              -H "Authorization: Bearer ${{FLOWBOT_WEBHOOK_TOKEN}}" \\
-              -H "Content-Type: application/json" \\
-              -d "{{\\"message\\": \\"${{MSG}}\\", \\"source\\": \\"circleci\\"}}"
+      - when:
+          condition:
+            equal: [false, << parameters.build_only >>]
+          steps:
+            - run:
+                name: Notify FlowBot — build complete
+                when: always
+                command: |
+                  TAG="${{CIRCLE_TAG:-latest}}"
+                  if [ -z "$FLOWBOT_WEBHOOK_URL" ] || [ -z "$FLOWBOT_WEBHOOK_TOKEN" ]; then
+                    exit 0
+                  fi
+                  if [ -f /tmp/build_success ]; then
+                    MSG="Tell me that the comfyui-serverless:${{TAG}} Docker build succeeded and was pushed to Docker Hub. Commit ${{CIRCLE_SHA1:0:7}}: ${{COMMIT_MSG}}"
+                  else
+                    MSG="Tell me that the comfyui-serverless:${{TAG}} Docker build failed. Commit ${{CIRCLE_SHA1:0:7}}: ${{COMMIT_MSG}}. Logs: ${{CIRCLE_BUILD_URL}}"
+                  fi
+                  curl -s -X POST "${{FLOWBOT_WEBHOOK_URL}}/hooks/agent" \\
+                    -H "Authorization: Bearer ${{FLOWBOT_WEBHOOK_TOKEN}}" \\
+                    -H "Content-Type: application/json" \\
+                    -d "{{\\"message\\": \\"${{MSG}}\\", \\"source\\": \\"circleci\\"}}"
 
   update_endpoint:
     executor: python
@@ -336,6 +356,16 @@ workflows:
           context: [flowbot-webhook-token]
           requires: [publish_runtime_manifest]
           filters: {{ tags: {{ only: "/^v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
+
+  build-image-only:
+    jobs:
+      - verify:
+          filters: {{ tags: {{ only: "/^build-v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
+      - build_and_push:
+          build_only: true
+          context: [docker-hub]
+          requires: [verify]
+          filters: {{ tags: {{ only: "/^build-v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
 """
 
 

@@ -36,7 +36,9 @@ def test_dockerfile_inherits_pinned_shared_base() -> None:
     source = _dockerfile()
     base_image = _pins().get("base_image", "")
     assert re.fullmatch(
-        r"hearmeman/comfyui-base:cu130-comfy[^-]+-torch[^\s]+", base_image
+        r"hearmeman/comfyui-base:cu130-comfy\d+\.\d+\.\d+"
+        r"(?:-[0-9a-f]{8})?-torch\d+\.\d+\.\d+",
+        base_image,
     ), base_image
     assert f"ARG BASE_IMAGE={base_image}" in source
     assert "FROM ${BASE_IMAGE}" in source
@@ -69,6 +71,15 @@ def test_serverless_manager_path_is_adapted_without_reinstalling_manager() -> No
     assert "/ComfyUI/custom_nodes/comfyui-manager" in source
     assert "/ComfyUI/custom_nodes/ComfyUI-Manager" in source
     assert MANAGER_REPO not in source
+
+
+def test_build_verifies_and_logs_inherited_comfyui_version_and_commit() -> None:
+    source = _dockerfile()
+    assert "comfyui_version.__version__" in source
+    assert '["git", "-C", "/ComfyUI", "rev-parse", "HEAD"]' in source
+    assert 'Path("/comfyui-approved-ref")' in source
+    assert 'f"{approved}^{{commit}}"' in source
+    assert "if head != resolved:" in source
 
 
 if __name__ == "__main__":

@@ -70,6 +70,75 @@ def test_worker_build_waits_for_contract_verification() -> None:
     assert named["build_and_push"]["requires"] == ["verify"]
 
 
+def test_build_only_workflow_builds_without_deploy_publish_or_notifications() -> None:
+    config = generated()
+    jobs = config["workflows"]["build-image-only"]["jobs"]
+    named = {list(job)[0]: list(job.values())[0] for job in jobs}
+    assert set(named) == {"verify", "build_and_push"}
+    assert named["build_and_push"]["requires"] == ["verify"]
+    assert named["build_and_push"]["build_only"] is True
+    assert named["build_and_push"]["context"] == ["docker-hub"]
+    assert all(
+        "deploy" not in name and "publish" not in name and "notify" not in name
+        for name in named
+    )
+
+
+def test_build_only_tag_normalizes_to_worker_v_tag() -> None:
+    config = generated()
+    command = next(
+        step["run"]["command"]
+        for step in config["jobs"]["build_and_push"]["steps"]
+        if isinstance(step, dict)
+        and "run" in step
+        and step["run"].get("name", "").startswith("Build & push ComfyUI")
+    )
+    assert 'TAG="${CIRCLE_TAG:-latest}"' in command
+    assert '[[ ! "$TAG" =~ ^build-v[0-9]+$ ]]' in command
+    assert 'TAG="${TAG#build-}"' in command
+
+
+def test_build_start_and_result_notifications_are_conditionally_gated() -> None:
+    config = generated()
+    steps = config["jobs"]["build_and_push"]["steps"]
+    gated = [
+        step["when"]
+        for step in steps
+        if isinstance(step, dict)
+        and "when" in step
+        and step["when"].get("condition") == {"equal": [False, "<< parameters.build_only >>"]}
+    ]
+    assert len(gated) == 2, "both build-start and build-result notifications must be gated"
+
+
+def test_release_workflow_remains_full_and_does_not_change_the_tag() -> None:
+    config = generated()
+    jobs = config["workflows"]["build-deploy"]["jobs"]
+    named = {list(job)[0]: list(job.values())[0] for job in jobs}
+    assert set(named) == {
+        "verify",
+        "build_and_push",
+        "update_endpoint",
+        "wait_for_rollout",
+        "publish_runtime_manifest",
+        "notify_done",
+    }
+    assert "build_only" not in named["build_and_push"]
+
+
+def test_build_only_is_tag_only_and_setup_routes_build_tags() -> None:
+    setup_config = yaml.safe_load((SCRIPT.parent / "config.yml").read_text())
+    setup_filters = setup_config["workflows"]["setup"]["jobs"][0]["setup"]["filters"]
+    assert "build-" in setup_filters["tags"]["only"]
+    assert setup_filters["branches"]["ignore"] == "/.*/"
+
+    workflow_jobs = generated()["workflows"]["build-image-only"]["jobs"]
+    for job in workflow_jobs:
+        config = list(job.values())[0]
+        assert config["filters"]["tags"]["only"] == "/^build-v[0-9]+$/"
+        assert config["filters"]["branches"]["ignore"] == "/.*/"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

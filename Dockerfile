@@ -4,7 +4,7 @@
 # ComfyUI, ComfyUI-Manager, SageAttention, and the CivitAI downloader.
 # pins.json is the release source of truth; CircleCI passes the same value as
 # BASE_IMAGE, while this default keeps a plain local build coherent.
-ARG BASE_IMAGE=hearmeman/comfyui-base:cu130-comfy0.32.0-torch2.11.0
+ARG BASE_IMAGE=hearmeman/comfyui-base:cu130-comfy0.42.1-63be2f9b-torch2.11.0
 FROM ${BASE_IMAGE}
 ARG BASE_IMAGE
 
@@ -59,6 +59,25 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 
 # Fail the build if the inherited father contract or essential child imports
 # are broken. The real SageAttention kernel probe remains in the handler boot.
+RUN PYTHONPATH=/ComfyUI python3 - <<'PY'
+import subprocess
+from pathlib import Path
+
+import comfyui_version
+
+approved = Path("/comfyui-approved-ref").read_text(encoding="utf-8").strip()
+head = subprocess.check_output(
+    ["git", "-C", "/ComfyUI", "rev-parse", "HEAD"], text=True
+).strip()
+resolved = subprocess.check_output(
+    ["git", "-C", "/ComfyUI", "rev-parse", "--verify", f"{approved}^{{commit}}"],
+    text=True,
+).strip()
+print(f"ComfyUI {comfyui_version.__version__}; git HEAD {head}; approved {resolved}")
+if head != resolved:
+    raise SystemExit(f"ComfyUI HEAD {head} does not match approved ref {resolved}")
+PY
+
 RUN test -s /comfyui-approved-ref \
     && test -d /ComfyUI/custom_nodes/ComfyUI-Manager \
     && python3 -c "\

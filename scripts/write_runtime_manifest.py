@@ -19,7 +19,7 @@ PINS_FILE = REPO_ROOT / "pins.json"
 IMAGE_REPOSITORY = "hearmeman/comfyui-serverless"
 TAG_RE = re.compile(r"^v\d+$")
 BASE_IMAGE_RE = re.compile(
-    r"^hearmeman/comfyui-base:cu130-comfy[^-]+-torch[^\s]+$"
+    r"^hearmeman/comfyui-base:cu130-comfy\d+\.\d+\.\d+(?:-[0-9a-f]{8})?-torch\d+\.\d+\.\d+$"
 )
 
 REQUIRED_CLASSES = [
