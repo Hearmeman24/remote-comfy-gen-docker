@@ -92,6 +92,8 @@ def test_all_supplied_workflow_node_packs_have_immutable_pins() -> None:
             "3394e44afea04ed0188fb37b21f0d9952469766b",
         "https://github.com/Hearmeman24/ComfyUI-OpenRouter-Simple.git":
             "79a217c596f808a133305a9e9cb7c49cda6bc184",
+        "https://github.com/kijai/ComfyUI-KJNodes.git":
+            "203eb357743402b437db8ae973a062a9b15387d2",
     }
     locked = {
         line.split()[0]: line.split()[1]
