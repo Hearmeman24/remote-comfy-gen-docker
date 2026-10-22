@@ -168,6 +168,44 @@ def test_setup_routes_baked_tags() -> None:
     assert "baked-" in setup_filters["tags"]["only"]
 
 
+def test_final_baked_regional_route_is_v4_registry_only() -> None:
+    config = generated()
+    jobs = config["workflows"]["finalize-baked-regional-only"]["jobs"]
+    named = {list(job)[0]: list(job.values())[0] for job in jobs}
+    assert set(named) == {"verify", "finalize_baked_regional"}
+    finalizer = named["finalize_baked_regional"]
+    assert finalizer["requires"] == ["verify"]
+    assert finalizer["context"] == ["docker-hub"]
+    assert finalizer["filters"]["tags"]["only"] == "/^finalize-baked-v4$/"
+    assert finalizer["filters"]["branches"]["ignore"] == "/.*/"
+
+    job = config["jobs"]["finalize_baked_regional"]
+    assert job["executor"] == "python"
+    assert config["executors"]["python"]["docker"][0]["image"] == "cimg/python:3.12"
+    runs = [step["run"] for step in job["steps"] if isinstance(step, dict) and "run" in step]
+    assert runs[0]["name"] == "Test registry finalizer offline"
+    assert runs[0]["command"] == "python3 scripts/test_finalize_baked_regional.py"
+    run_command = runs[1]["command"]
+    assert '"finalize-baked-v4"' in run_command
+    assert 'RELEASE_TAG="scail-krea-${CIRCLE_TAG#finalize-baked-}"' in run_command
+    assert "scripts/finalize_baked_regional.py" in run_command
+    assert "--base-image \"docker.io/hearmeman/comfyui-serverless@sha256:6bf2cdc384eb262ae9526acd1c0d075ef4e2dd9fd761ce1d3f5bcf6e1f6cb7f3\"" in run_command
+    assert "--expected-model-manifest-sha256 992faae2db315947e357070bab3377b76dfd63af00cf67bafaf7f60e6942cc9d" in run_command
+    assert "--publish" in run_command
+    assert "cat \"${RECEIPT}\"" in run_command
+    assert "update_endpoint" not in run_command
+    assert "publish_runtime_manifest" not in run_command
+    assert "flowbot" not in run_command.lower()
+    assert job["steps"][-1]["store_artifacts"]["destination"] == "baked-regional-finalization/receipt.json"
+    assert job["steps"][-1]["store_artifacts"]["path"] == "/tmp/baked-regional-finalize-receipt.json"
+
+
+def test_setup_routes_final_baked_tags() -> None:
+    setup_config = yaml.safe_load((SCRIPT.parent / "config.yml").read_text())
+    setup_filters = setup_config["workflows"]["setup"]["jobs"][0]["setup"]["filters"]
+    assert "finalize-baked-" in setup_filters["tags"]["only"]
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
