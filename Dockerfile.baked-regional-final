@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1.7
+# Small final overlay. BASE_IMAGE must be the immutable digest of the last
+# verified per-asset layer. No RUN follows these COPY instructions.
+ARG BASE_IMAGE=hearmeman/comfyui-serverless:v38@sha256:897b7f4ab6c24536e3e25d426f9b72363677e81981a3d4817f8443dbed5cde95
+ARG MODEL_MANIFEST_SHA256
+ARG RECIPE_SHA256
+FROM --platform=linux/amd64 ${BASE_IMAGE} AS final
+ARG BASE_IMAGE
+ARG MODEL_MANIFEST_SHA256
+ARG RECIPE_SHA256
+LABEL org.hearmemanai.comfygen.image-variant="baked-regional" \
+      org.hearmemanai.comfygen.base-image="${BASE_IMAGE}" \
+      org.hearmemanai.comfygen.runtime-commit="60fdc14d6b3a4bccf181f8aa8e6983d0311766da" \
+      org.hearmemanai.comfygen.model-manifest-sha256="${MODEL_MANIFEST_SHA256}" \
+      org.hearmemanai.comfygen.layer-recipe-sha256="${RECIPE_SHA256}" \
+      org.opencontainers.image.title="Krea 2 and SCAIL 2 ComfyGen runtime" \
+      org.opencontainers.image.description="ComfyGen runtime image with model-specific license notices; Krea 2 assets require recipient agreement to the Krea 2 Community License."
+ENV AUX_ANNOTATOR_CKPTS_PATH=/runpod-volume/ComfyUI/models/annotator_ckpts
+COPY --link extra_model_paths.baked-regional.yaml /ComfyUI/extra_model_paths.yaml
+COPY --link --chmod=0755 start_script.baked-regional.sh /start_script.sh
+COPY --link log_forwarder.py /log_forwarder.py
+COPY --link MODEL-NOTICES.md /usr/share/comfygen-model-licenses/MODEL-NOTICES.md
+COPY --link notices/krea/LICENSE.pdf /usr/share/comfygen-model-licenses/krea/LICENSE.pdf
+COPY --link notices/krea/NOTICE /usr/share/comfygen-model-licenses/krea/NOTICE
+COPY --link notices/apache/LICENSE /usr/share/comfygen-model-licenses/apache/LICENSE
+COPY --link notices/scail/LICENSE /usr/share/comfygen-model-licenses/scail/LICENSE
+COPY --link notices/rife/LICENSE /usr/share/comfygen-model-licenses/rife/LICENSE
+COPY --link notices/sam/LICENSE /usr/share/comfygen-model-licenses/sam/LICENSE
+CMD ["/start_script.sh"]

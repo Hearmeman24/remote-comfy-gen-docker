@@ -1,0 +1,35 @@
+[
+  {
+    "asset_id": "qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors",
+    "source": "Comfy-Org/Qwen-Image-2.1",
+    "revision": "ace0edeb3791a594ddfa36ed5f41a178a394e921",
+    "source_path": "text_encoders/qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors",
+    "target_path": "text_encoders/qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors",
+    "bytes": 9471072252,
+    "sha256": "9182abae56fe05459840a86d22abd21f972061c92fce032630af680c8c5178d3",
+    "license_id": "QwenResearch noncommercial",
+    "regional_reason": "QwenResearch license is noncommercial; keep in separately controlled regional volume until commercial-use terms are cleared."
+  },
+  {
+    "asset_id": "Krea2_TextFusion_Refusal_Reduction.safetensors",
+    "source": "aissasell/Krea-2-LoRAs",
+    "revision": "d10da37d2d180e24f2bfede4ef12fdd9fcfc742a",
+    "source_path": "Krea2_TextFusion_Refusal_Reduction.safetensors",
+    "target_path": "loras/Krea2_TextFusion_Refusal_Reduction.safetensors",
+    "bytes": 27665664,
+    "sha256": "84ec722ddab93f6489c5315bca25de5dd1a7b7ec5045a3c4ce2f97f62e54e8e6",
+    "license_id": "Unverified author terms",
+    "regional_reason": "Author license terms are not verified; keep on the separately controlled regional volume pending rights review."
+  },
+  {
+    "asset_id": "1x-ITF-SkinDiffDetail-Lite-v1.pth",
+    "source": "LiaSky94/Lia",
+    "revision": "030af63642ee1ec3356d5e1ff11db36a81201283",
+    "source_path": "1x-ITF-SkinDiffDetail-Lite-v1.pth",
+    "target_path": "upscale_models/1x-ITF-SkinDiffDetail-Lite-v1.pth",
+    "bytes": 20099337,
+    "sha256": "94d368b633614958f84f335b129fd85abd30200e8fbc575b859ba6762116222b",
+    "license_id": "CC-BY-NC-SA-4",
+    "regional_reason": "CC-BY-NC-SA-4; keep on the separately controlled regional volume and preserve attribution/share-alike terms."
+  }
+]

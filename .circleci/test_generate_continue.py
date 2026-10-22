@@ -139,6 +139,35 @@ def test_build_only_is_tag_only_and_setup_routes_build_tags() -> None:
         assert config["filters"]["branches"]["ignore"] == "/.*/"
 
 
+def test_baked_regional_route_is_separate_and_build_only() -> None:
+    config = generated()
+    jobs = config["workflows"]["build-baked-regional-only"]["jobs"]
+    named = {list(job)[0]: list(job.values())[0] for job in jobs}
+    assert set(named) == {"verify", "build_baked_regional"}
+    build = named["build_baked_regional"]
+    assert build["requires"] == ["verify"]
+    assert build["context"] == ["docker-hub"]
+    assert build["filters"]["tags"]["only"] == "/^baked-v[0-9]+$/"
+    assert build["filters"]["branches"]["ignore"] == "/.*/"
+    command = next(
+        step["run"]["command"]
+        for step in config["jobs"]["build_baked_regional"]["steps"]
+        if isinstance(step, dict) and "run" in step
+        and step["run"].get("name", "").startswith("Build and push the baked-regional")
+    )
+    assert "scripts/build_baked_regional_layers.py" in command
+    assert "--apply" in command and 'scail-krea-${CIRCLE_TAG#baked-}' in command
+    assert "update_endpoint" not in command
+    assert "notify" not in command.lower()
+    assert "publish_runtime_manifest" not in command
+
+
+def test_setup_routes_baked_tags() -> None:
+    setup_config = yaml.safe_load((SCRIPT.parent / "config.yml").read_text())
+    setup_filters = setup_config["workflows"]["setup"]["jobs"][0]["setup"]["filters"]
+    assert "baked-" in setup_filters["tags"]["only"]
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1.7
+# One immutable model layer per external build. The downloader does not inherit
+# the large previous image; the final stage uses only a metadata-only parent
+# plus COPY --link, so BuildKit need not unpack prior model layers.
+ARG BASE_IMAGE=hearmeman/comfyui-serverless:v38@sha256:897b7f4ab6c24536e3e25d426f9b72363677e81981a3d4817f8443dbed5cde95
+ARG MODEL_ASSET_ID
+ARG MODEL_ASSET_SHA256
+ARG MODEL_MANIFEST_SHA256
+ARG RECIPE_SHA256
+
+FROM --platform=linux/amd64 python:3.12-slim@sha256:e8a38829209aea82774882e5157e1f7c3e8c8393ff53a697b3580896e57f345c AS model-download
+ARG MODEL_ASSET_ID
+COPY download_baked_model.py /download_baked_model.py
+COPY baked-models.manifest.json /baked-models.manifest.json
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --no-cache-dir "huggingface_hub[cli]==1.3.2" \
+    && hf version \
+    && python3 /download_baked_model.py --validate-manifest-only
+RUN --mount=type=secret,id=hf_token,required=true \
+    python3 /download_baked_model.py --asset-id "$MODEL_ASSET_ID" --target-root /baked-models
+
+FROM --platform=linux/amd64 ${BASE_IMAGE} AS image
+ARG BASE_IMAGE
+ARG MODEL_ASSET_ID
+ARG MODEL_ASSET_SHA256
+ARG MODEL_MANIFEST_SHA256
+ARG RECIPE_SHA256
+LABEL org.hearmemanai.comfygen.layer="baked-model" \
+      org.hearmemanai.comfygen.base-image="${BASE_IMAGE}" \
+      org.hearmemanai.comfygen.model-asset-id="${MODEL_ASSET_ID}" \
+      org.hearmemanai.comfygen.model-asset-sha256="${MODEL_ASSET_SHA256}" \
+      org.hearmemanai.comfygen.model-manifest-sha256="${MODEL_MANIFEST_SHA256}" \
+      org.hearmemanai.comfygen.layer-recipe-sha256="${RECIPE_SHA256}"
+COPY --link --from=model-download /baked-models/ /ComfyUI/models/
+COPY --link MODEL-NOTICES.md /usr/share/comfygen-model-licenses/MODEL-NOTICES.md
+COPY --link notices/krea/LICENSE.pdf /usr/share/comfygen-model-licenses/krea/LICENSE.pdf
+COPY --link notices/krea/NOTICE /usr/share/comfygen-model-licenses/krea/NOTICE
+COPY --link notices/apache/LICENSE /usr/share/comfygen-model-licenses/apache/LICENSE
+COPY --link notices/scail/LICENSE /usr/share/comfygen-model-licenses/scail/LICENSE
+COPY --link notices/rife/LICENSE /usr/share/comfygen-model-licenses/rife/LICENSE
+COPY --link notices/sam/LICENSE /usr/share/comfygen-model-licenses/sam/LICENSE

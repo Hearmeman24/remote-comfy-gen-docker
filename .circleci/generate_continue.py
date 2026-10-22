@@ -81,7 +81,11 @@ jobs:
             python3 scripts/test_write_runtime_manifest.py
             python3 scripts/test_freeze.py
             python3 .circleci/test_generate_continue.py
+            python3 scripts/test_baked_regional.py
             python3 -m json.tool pins.json >/dev/null
+            python3 -m json.tool pins.baked-regional.json >/dev/null
+            python3 -m json.tool baked-models.manifest.json >/dev/null
+            python3 -m json.tool regional-models.manifest.json >/dev/null
             find scripts -name '*.py' -print0 | xargs -0 -r python3 -m py_compile
 
   build_and_push:
@@ -319,6 +323,31 @@ jobs:
               --push \\
               .
 
+  build_baked_regional:
+    # Alternate build-only route. Each model is downloaded with the HF CLI in
+    # an isolated BuildKit stage and copied onto the previous immutable image
+    # using COPY --link. This route never deploys, publishes manifests, or
+    # sends FlowBot notifications.
+    executor: docker-dind
+    steps:
+      - checkout
+      - run:
+          name: Log in to Docker Hub
+          command: |
+            echo "$DOCKERHUB_PAT" | docker login -u "$DOCKERHUB_USER" --password-stdin
+      - run:
+          name: Build and push the baked-regional image in resumable layers
+          no_output_timeout: 4h
+          command: |
+            if [[ ! "${{CIRCLE_TAG:-}}" =~ ^baked-v[0-9]+$ ]]; then
+              echo "FATAL: baked-regional builds require a baked-v<N> tag"
+              exit 1
+            fi
+            RELEASE_TAG="scail-krea-${{CIRCLE_TAG#baked-}}"
+            python3 scripts/build_baked_regional_layers.py \\
+              --apply \\
+              --release-tag "${{RELEASE_TAG}}"
+
 workflows:
   build-installer:
     jobs:
@@ -366,6 +395,15 @@ workflows:
           context: [docker-hub]
           requires: [verify]
           filters: {{ tags: {{ only: "/^build-v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
+
+  build-baked-regional-only:
+    jobs:
+      - verify:
+          filters: {{ tags: {{ only: "/^baked-v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
+      - build_baked_regional:
+          context: [docker-hub]
+          requires: [verify]
+          filters: {{ tags: {{ only: "/^baked-v[0-9]+$/" }}, branches: {{ ignore: "/.*/" }} }}
 """
 
 
