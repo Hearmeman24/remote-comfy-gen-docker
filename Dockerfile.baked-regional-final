@@ -20,10 +20,5 @@ COPY --link extra_model_paths.baked-regional.yaml /ComfyUI/extra_model_paths.yam
 COPY --link --chmod=0755 start_script.baked-regional.sh /start_script.sh
 COPY --link log_forwarder.py /log_forwarder.py
 COPY --link MODEL-NOTICES.md /usr/share/comfygen-model-licenses/MODEL-NOTICES.md
-COPY --link notices/krea/LICENSE.pdf /usr/share/comfygen-model-licenses/krea/LICENSE.pdf
-COPY --link notices/krea/NOTICE /usr/share/comfygen-model-licenses/krea/NOTICE
-COPY --link notices/apache/LICENSE /usr/share/comfygen-model-licenses/apache/LICENSE
-COPY --link notices/scail/LICENSE /usr/share/comfygen-model-licenses/scail/LICENSE
-COPY --link notices/rife/LICENSE /usr/share/comfygen-model-licenses/rife/LICENSE
-COPY --link notices/sam/LICENSE /usr/share/comfygen-model-licenses/sam/LICENSE
+COPY --link notices/ /usr/share/comfygen-model-licenses/
 CMD ["/start_script.sh"]

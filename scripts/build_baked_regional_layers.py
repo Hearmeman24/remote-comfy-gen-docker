@@ -48,20 +48,24 @@ def hash_recipe_items(items: list[tuple[str, bytes]]) -> str:
 
 
 def recipe_sha256() -> str:
-    recipe_inputs = (
-        LAYER_DOCKERFILE,
-        ROOT / "download_baked_model.py",
-        ROOT / "MODEL-NOTICES.md",
-        ROOT / "notices/krea/LICENSE.pdf",
-        ROOT / "notices/krea/NOTICE",
-        ROOT / "notices/apache/LICENSE",
-        ROOT / "notices/scail/LICENSE",
-        ROOT / "notices/rife/LICENSE",
-        ROOT / "notices/sam/LICENSE",
+    root = ROOT.resolve()
+    fixed_inputs = (
+        LAYER_DOCKERFILE.resolve(),
+        root / "download_baked_model.py",
+        root / "MODEL-NOTICES.md",
         Path(__file__).resolve(),
     )
+    notices = root / "notices"
+    # The Dockerfile copies the entire notices tree. Bind every regular file
+    # into layer identity so adding or changing a license can never reuse an
+    # intermediate built with a different notice set.
+    notice_inputs = sorted(
+        (path for path in notices.rglob("*") if path.is_file()),
+        key=lambda path: path.relative_to(root).as_posix(),
+    )
+    recipe_inputs = (*fixed_inputs, *notice_inputs)
     return hash_recipe_items([
-        (path.relative_to(ROOT).as_posix(), path.read_bytes()) for path in recipe_inputs
+        (path.relative_to(root).as_posix(), path.read_bytes()) for path in recipe_inputs
     ])
 
 
