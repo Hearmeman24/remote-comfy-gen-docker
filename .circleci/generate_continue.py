@@ -362,10 +362,41 @@ jobs:
           name: Finalize the existing baked-regional image in the registry
           command: |
             if [[ "${{CIRCLE_TAG:-}}" != "finalize-baked-v4" ]]; then
-              echo "FATAL: this recovery finalization is restricted to finalize-baked-v4"
+              echo "FATAL: this finalization route is restricted to finalize-baked-v4"
               exit 1
             fi
-            RELEASE_TAG="scail-krea-${{CIRCLE_TAG#finalize-baked-}}"
+            RELEASE_TAG="scail-krea-v4"
+            RELEASE_IMAGE="docker.io/hearmeman/comfyui-serverless:${{RELEASE_TAG}}"
+            RECEIPT="/tmp/baked-regional-finalize-receipt.json"
+            python3 scripts/finalize_baked_regional.py \\
+              --base-image "docker.io/hearmeman/comfyui-serverless@sha256:6bf2cdc384eb262ae9526acd1c0d075ef4e2dd9fd761ce1d3f5bcf6e1f6cb7f3" \\
+              --tag "${{RELEASE_IMAGE}}" \\
+              --expected-model-manifest-sha256 992faae2db315947e357070bab3377b76dfd63af00cf67bafaf7f60e6942cc9d \\
+              --receipt "${{RECEIPT}}" \\
+              --publish
+            python3 -m json.tool "${{RECEIPT}}" >/dev/null
+            cat "${{RECEIPT}}"
+      - store_artifacts:
+          path: /tmp/baked-regional-finalize-receipt.json
+          destination: baked-regional-finalization/receipt.json
+
+  finalize_baked_regional_recovery:
+    # Isolated v5 retry route; it writes the same fixed v4 target and remains
+    # incapable of building layers, deploying, publishing manifests, or notifying.
+    executor: python
+    steps:
+      - checkout
+      - run:
+          name: Test registry finalizer offline
+          command: python3 scripts/test_finalize_baked_regional.py
+      - run:
+          name: Recover finalization of the existing baked-regional image
+          command: |
+            if [[ "${{CIRCLE_TAG:-}}" != "finalize-baked-v5" ]]; then
+              echo "FATAL: recovery finalization is restricted to finalize-baked-v5"
+              exit 1
+            fi
+            RELEASE_TAG="scail-krea-v4"
             RELEASE_IMAGE="docker.io/hearmeman/comfyui-serverless:${{RELEASE_TAG}}"
             RECEIPT="/tmp/baked-regional-finalize-receipt.json"
             python3 scripts/finalize_baked_regional.py \\
@@ -445,6 +476,15 @@ workflows:
           context: [docker-hub]
           requires: [verify]
           filters: {{ tags: {{ only: "/^finalize-baked-v4$/" }}, branches: {{ ignore: "/.*/" }} }}
+
+  finalize-baked-regional-recovery-v5-only:
+    jobs:
+      - verify:
+          filters: {{ tags: {{ only: "/^finalize-baked-v5$/" }}, branches: {{ ignore: "/.*/" }} }}
+      - finalize_baked_regional_recovery:
+          context: [docker-hub]
+          requires: [verify]
+          filters: {{ tags: {{ only: "/^finalize-baked-v5$/" }}, branches: {{ ignore: "/.*/" }} }}
 """
 
 

@@ -48,6 +48,29 @@ class FinalizeError(RuntimeError):
     pass
 
 
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urllib.parse.urlsplit(url)
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme.lower() == "https" else 80 if parsed.scheme.lower() == "http" else None
+    return parsed.scheme.lower(), (parsed.hostname or "").lower(), port
+
+
+class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Strip registry credentials before following a redirect to another origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and _origin(req.full_url) != _origin(newurl):
+            sensitive = {"authorization", "proxy-authorization"}
+            for attribute in ("headers", "unredirected_hdrs"):
+                current = getattr(redirected, attribute, {})
+                for key in list(current):
+                    if key.lower() in sensitive:
+                        del current[key]
+        return redirected
+
+
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -197,6 +220,7 @@ class Registry:
         self.host = host
         self.repo = repo
         self.api = (registry_url or f"https://{host}").rstrip("/")
+        self.opener = urllib.request.build_opener(SafeRedirectHandler())
         if host == "registry-1.docker.io":
             auth_url = token_url or "https://auth.docker.io/token"
             service = "registry.docker.io"
@@ -211,7 +235,7 @@ class Registry:
             headers["Authorization"] = f"Basic {credential}"
         req = urllib.request.Request(f"{auth_url}?{query}", headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with self.opener.open(req, timeout=30) as response:
                 token_data = json.loads(response.read())
         except Exception as exc:
             raise FinalizeError(f"registry token request failed ({type(exc).__name__})") from None
@@ -229,7 +253,7 @@ class Registry:
             headers["Accept"] = accept
         req = urllib.request.Request(self.api + path, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=120) as response:
+            with self.opener.open(req, timeout=120) as response:
                 body = response.read()
                 status = response.status
                 response_headers = {k.lower(): v for k, v in response.headers.items()}
@@ -280,7 +304,7 @@ class Registry:
             "Authorization": f"Bearer {self.token}", "Content-Type": "application/octet-stream",
         })
         try:
-            with urllib.request.urlopen(request, timeout=180) as response:
+            with self.opener.open(request, timeout=180) as response:
                 if response.status not in (201, 202):
                     raise FinalizeError(f"registry blob upload returned HTTP {response.status}")
         except urllib.error.HTTPError as exc:

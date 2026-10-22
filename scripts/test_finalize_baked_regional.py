@@ -59,6 +59,8 @@ class FakeRegistry(http.server.BaseHTTPRequestHandler):
     upload_bytes: dict[str, bytes]
     manifest_puts: int
     next_upload: int
+    redirect_blob_digest: str | None
+    redirect_url: str | None
 
     def log_message(self, *_args):
         pass
@@ -96,6 +98,8 @@ class FakeRegistry(http.server.BaseHTTPRequestHandler):
             return self.send(200, body, {"Content-Type": media, "Docker-Content-Digest": digest(body)})
         if "/blobs/" in parsed.path:
             blob_digest = parsed.path.rsplit("/blobs/", 1)[1]
+            if blob_digest == self.redirect_blob_digest and self.redirect_url:
+                return self.send(302, headers={"Location": self.redirect_url})
             body = self.blobs.get(blob_digest)
             if body is None:
                 return self.send(404, b"")
@@ -200,6 +204,8 @@ class FinalizerTests(unittest.TestCase):
         FakeRegistry.upload_bytes = {}
         FakeRegistry.manifest_puts = 0
         FakeRegistry.next_upload = 0
+        FakeRegistry.redirect_blob_digest = None
+        FakeRegistry.redirect_url = None
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeRegistry)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -312,6 +318,63 @@ class FinalizerTests(unittest.TestCase):
                                      for layer in FakeRegistry.base_manifest["layers"] if method == "GET"))
             finally:
                 server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_authenticated_config_redirect_drops_auth_for_signed_storage(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_sha, final_asset_sha = fixture_source(root)
+            source_server, source_thread, api = self.make_registry()
+            storage_state = {"authorization": None, "path": None}
+
+            class SignedStorage(http.server.BaseHTTPRequestHandler):
+                def log_message(self, *_args):
+                    pass
+
+                def do_GET(self):
+                    storage_state["authorization"] = self.headers.get("Authorization")
+                    storage_state["path"] = self.path
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(FakeRegistry.base_config_bytes)))
+                    self.end_headers()
+                    self.wfile.write(FakeRegistry.base_config_bytes)
+
+            storage_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), SignedStorage)
+            storage_thread = threading.Thread(target=storage_server.serve_forever, daemon=True)
+            storage_thread.start()
+            try:
+                cfg = FakeRegistry.base_config
+                cfg["config"]["Labels"][finalizer.LABEL_PREFIX + "model-manifest-sha256"] = manifest_sha
+                cfg["config"]["Labels"][finalizer.LABEL_PREFIX + "model-asset-sha256"] = final_asset_sha
+                config_body = json.dumps(cfg, separators=(",", ":")).encode()
+                config_digest = digest(config_body)
+                FakeRegistry.base_config = cfg
+                FakeRegistry.base_config_bytes = config_body
+                FakeRegistry.base_manifest["config"]["digest"] = config_digest
+                FakeRegistry.base_manifest["config"]["size"] = len(config_body)
+                child_body = json.dumps(FakeRegistry.base_manifest, separators=(",", ":")).encode()
+                child_digest = digest(child_body)
+                index = json.loads(FakeRegistry.index_bytes)
+                amd = next(x for x in index["manifests"] if x["platform"]["architecture"] == "amd64")
+                amd["digest"] = child_digest
+                amd["size"] = len(child_body)
+                FakeRegistry.base_manifest_bytes = child_body
+                FakeRegistry.index_bytes = json.dumps(index, separators=(",", ":")).encode()
+                FakeRegistry.index_digest = digest(FakeRegistry.index_bytes)
+                FakeRegistry.blobs[config_digest] = config_body
+                FakeRegistry.redirect_blob_digest = config_digest
+                FakeRegistry.redirect_url = f"http://127.0.0.1:{storage_server.server_port}/config?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=placeholder"
+
+                result = self.invoke(root, "", manifest_sha, root / "redirect.json", api, publish=False, credentials=True)
+                self.assertEqual(result, 0)
+                self.assertIsNone(storage_state["authorization"])
+                self.assertIn("X-Amz-Algorithm=AWS4-HMAC-SHA256", storage_state["path"])
+                self.assertTrue(any(path.endswith("/blobs/" + config_digest) for method, path in FakeRegistry.calls if method == "GET"))
+                receipt_text = (root / "redirect.json").read_text()
+                self.assertNotIn("X-Amz-Signature", receipt_text)
+                self.assertNotIn("not-a-real-secret", receipt_text)
+            finally:
+                source_server.shutdown(); source_server.server_close(); source_thread.join(timeout=2)
+                storage_server.shutdown(); storage_server.server_close(); storage_thread.join(timeout=2)
 
     def test_refuses_unsafe_tags_and_digest_collision(self):
         with TemporaryDirectory() as tmp:

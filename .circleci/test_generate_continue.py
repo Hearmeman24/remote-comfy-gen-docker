@@ -187,7 +187,7 @@ def test_final_baked_regional_route_is_v4_registry_only() -> None:
     assert runs[0]["command"] == "python3 scripts/test_finalize_baked_regional.py"
     run_command = runs[1]["command"]
     assert '"finalize-baked-v4"' in run_command
-    assert 'RELEASE_TAG="scail-krea-${CIRCLE_TAG#finalize-baked-}"' in run_command
+    assert 'RELEASE_TAG="scail-krea-v4"' in run_command
     assert "scripts/finalize_baked_regional.py" in run_command
     assert "--base-image \"docker.io/hearmeman/comfyui-serverless@sha256:6bf2cdc384eb262ae9526acd1c0d075ef4e2dd9fd761ce1d3f5bcf6e1f6cb7f3\"" in run_command
     assert "--expected-model-manifest-sha256 992faae2db315947e357070bab3377b76dfd63af00cf67bafaf7f60e6942cc9d" in run_command
@@ -198,6 +198,31 @@ def test_final_baked_regional_route_is_v4_registry_only() -> None:
     assert "flowbot" not in run_command.lower()
     assert job["steps"][-1]["store_artifacts"]["destination"] == "baked-regional-finalization/receipt.json"
     assert job["steps"][-1]["store_artifacts"]["path"] == "/tmp/baked-regional-finalize-receipt.json"
+
+
+def test_final_baked_regional_v5_recovery_route_keeps_v4_target() -> None:
+    config = generated()
+    jobs = config["workflows"]["finalize-baked-regional-recovery-v5-only"]["jobs"]
+    named = {list(job)[0]: list(job.values())[0] for job in jobs}
+    assert set(named) == {"verify", "finalize_baked_regional_recovery"}
+    for name, job in named.items():
+        assert job["filters"]["tags"]["only"] == "/^finalize-baked-v5$/"
+        assert job["filters"]["branches"]["ignore"] == "/.*/"
+        if name == "finalize_baked_regional_recovery":
+            assert job["requires"] == ["verify"]
+            assert job["context"] == ["docker-hub"]
+
+    command = next(
+        step["run"]["command"]
+        for step in config["jobs"]["finalize_baked_regional_recovery"]["steps"]
+        if isinstance(step, dict) and "run" in step
+        and step["run"].get("name", "").startswith("Recover finalization")
+    )
+    assert '"finalize-baked-v5"' in command
+    assert 'RELEASE_TAG="scail-krea-v4"' in command
+    assert 'hearmeman/comfyui-serverless@sha256:6bf2cdc384eb262ae9526acd1c0d075ef4e2dd9fd761ce1d3f5bcf6e1f6cb7f3' in command
+    assert 'scail-krea-v4' in command
+    assert "--expected-model-manifest-sha256 992faae2db315947e357070bab3377b76dfd63af00cf67bafaf7f60e6942cc9d" in command
 
 
 def test_setup_routes_final_baked_tags() -> None:
