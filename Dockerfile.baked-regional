@@ -5,8 +5,10 @@ FROM --platform=linux/amd64 python:3.12-slim@sha256:e8a38829209aea82774882e5157e
 COPY download_baked_model.py /download_baked_model.py
 COPY baked-models.manifest.json /baked-models.manifest.json
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    pip install --no-cache-dir "huggingface_hub[cli]==1.3.2" \
+    pip install --no-cache-dir "huggingface_hub==2.2.0" "click==8.5.0" \
     && hf version \
+    && hf download --help >/dev/null \
+    && hf download --help | grep -q -- '--quiet' \
     && python3 /download_baked_model.py --validate-manifest-only
 RUN --mount=type=secret,id=hf_token,required=true python3 /download_baked_model.py --asset-id krea2_turbo_bf16.safetensors --target-root /baked-models
 RUN --mount=type=secret,id=hf_token,required=true python3 /download_baked_model.py --asset-id qwen3vl_4b_fp8_scaled.safetensors --target-root /baked-models

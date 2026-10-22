@@ -68,6 +68,15 @@ def test_each_layer_tag_binds_previous_digest() -> None:
 def test_incremental_dockerfiles_preserve_linked_base_and_secret_contract() -> None:
     layer = (ROOT / "Dockerfile.baked-regional-layer").read_text()
     final = (ROOT / "Dockerfile.baked-regional-final").read_text()
+    one_shot = (ROOT / "Dockerfile.baked-regional").read_text()
+    pins = json.loads((ROOT / "pins.baked-regional.json").read_text())
+    assert pins["huggingface_hub_version"] == "2.2.0"
+    assert pins["click_version"] == "8.5.0"
+    assert '"huggingface_hub==2.2.0" "click==8.5.0"' in layer
+    assert '"huggingface_hub==2.2.0" "click==8.5.0"' in one_shot
+    assert 'huggingface_hub[cli]' not in layer + one_shot
+    assert "hf version" in layer and "hf download --help" in layer and "--quiet" in layer
+    assert "hf version" in one_shot and "hf download --help" in one_shot and "--quiet" in one_shot
     assert "RUN --mount=type=secret,id=hf_token,required=true" in layer
     downloader = (ROOT / "download_baked_model.py").read_text()
     assert '"hf", "download"' in downloader
@@ -80,6 +89,11 @@ def test_incremental_dockerfiles_preserve_linked_base_and_secret_contract() -> N
     assert "COPY --link --chmod=0755 start_script.baked-regional.sh" in final
     assert "COPY --link notices/krea/LICENSE.pdf" in final
     assert "COPY --link notices/krea/NOTICE" in final
+    required_krea_notice = (
+        "Krea 2 is licensed under the Krea 2 Community License Agreement. "
+        "For more information, visit https://krea.ai/krea-2-licensing.\n"
+    )
+    assert (ROOT / "notices/krea/NOTICE").read_text() == required_krea_notice
     assert "COPY --link notices/apache/LICENSE" in final
     assert "COPY --link notices/scail/LICENSE" in final
     assert "COPY --link notices/rife/LICENSE" in final
