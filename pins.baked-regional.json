@@ -7,8 +7,8 @@
   "huggingface_hub_version": "2.2.0",
   "click_version": "8.5.0",
   "baked_models_manifest": "baked-models.manifest.json",
-  "baked_bytes": 86556007470,
-  "baked_asset_count": 15,
+  "baked_bytes": 77680288086,
+  "baked_asset_count": 14,
   "regional_asset_count": 3,
   "regional_bytes": 9518837253
 }

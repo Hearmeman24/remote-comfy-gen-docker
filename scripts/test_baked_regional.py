@@ -12,7 +12,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BASE_FILESYSTEM_LAYERS = 39  # Observed v38 manifest layer count, confirmed by the coordinator.
 LAYER_BUDGET = 120  # Keep below overlay2's 128 lower-layer limit.
-MODEL_ASSET_COUNT = 15
 
 
 def helper_module():
@@ -35,11 +34,14 @@ def test_manifests_and_pins_match_scope() -> None:
     pins = json.loads((ROOT / "pins.baked-regional.json").read_text())
     baked = json.loads((ROOT / "baked-models.manifest.json").read_text())
     regional = json.loads((ROOT / "regional-models.manifest.json").read_text())
-    assert len(baked) == pins["baked_asset_count"] == 15
+    assert len(baked) == pins["baked_asset_count"] == 14
     assert len(regional) == pins["regional_asset_count"] == 3
-    assert sum(item["bytes"] for item in baked) == pins["baked_bytes"] == 86_556_007_470
+    assert sum(item["bytes"] for item in baked) == pins["baked_bytes"] == 77_680_288_086
     assert sum(item["bytes"] for item in regional) == pins["regional_bytes"] == 9_518_837_253
     assert {x["asset_id"] for x in baked}.isdisjoint({x["asset_id"] for x in regional})
+    asset_ids = {x["asset_id"] for x in baked}
+    assert "qwen3vl_4b_fp8_scaled.safetensors" in asset_ids
+    assert "qwen3vl_4b_bf16.safetensors" not in asset_ids
 
 
 def test_dry_run_selects_small_pilot_and_does_not_build() -> None:
@@ -152,10 +154,11 @@ def test_incremental_chain_stays_below_filesystem_layer_budget() -> None:
     final = (ROOT / "Dockerfile.baked-regional-final").read_text()
     model_copy_count = len(copy_in_stage(layer, "AS image"))
     final_copy_count = len(copy_in_stage(final, "AS final"))
-    projected = BASE_FILESYSTEM_LAYERS + MODEL_ASSET_COUNT * model_copy_count + final_copy_count
+    baked = json.loads((ROOT / "baked-models.manifest.json").read_text())
+    projected = BASE_FILESYSTEM_LAYERS + len(baked) * model_copy_count + final_copy_count
     assert model_copy_count == 3  # model, MODEL-NOTICES.md, notices/ directory
     assert final_copy_count == 5  # config, startup script, logger, MODEL-NOTICES.md, notices/
-    assert projected == 89
+    assert projected == 86
     assert projected <= LAYER_BUDGET
 
 

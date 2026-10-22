@@ -12,7 +12,6 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     && python3 /download_baked_model.py --validate-manifest-only
 RUN --mount=type=secret,id=hf_token,required=true python3 /download_baked_model.py --asset-id krea2_turbo_bf16.safetensors --target-root /baked-models
 RUN --mount=type=secret,id=hf_token,required=true python3 /download_baked_model.py --asset-id qwen3vl_4b_fp8_scaled.safetensors --target-root /baked-models
-RUN --mount=type=secret,id=hf_token,required=true python3 /download_baked_model.py --asset-id qwen3vl_4b_bf16.safetensors --target-root /baked-models
 RUN --mount=type=secret,id=hf_token,required=true python3 /download_baked_model.py --asset-id Wan2_1_VAE_fp32.safetensors --target-root /baked-models
 RUN --mount=type=secret,id=hf_token,required=true python3 /download_baked_model.py --asset-id seedvr2_ema_7b_fp16.safetensors --target-root /baked-models
 RUN --mount=type=secret,id=hf_token,required=true python3 /download_baked_model.py --asset-id ema_vae_fp16.safetensors --target-root /baked-models
@@ -40,7 +39,6 @@ COPY --link MODEL-NOTICES.md /usr/share/comfygen-model-licenses/MODEL-NOTICES.md
 COPY --link notices/ /usr/share/comfygen-model-licenses/
 COPY --link --from=model-download /baked-models/diffusion_models/krea2_turbo_bf16.safetensors /ComfyUI/models/diffusion_models/krea2_turbo_bf16.safetensors
 COPY --link --from=model-download /baked-models/text_encoders/qwen3vl_4b_fp8_scaled.safetensors /ComfyUI/models/text_encoders/qwen3vl_4b_fp8_scaled.safetensors
-COPY --link --from=model-download /baked-models/text_encoders/qwen3vl_4b_bf16.safetensors /ComfyUI/models/text_encoders/qwen3vl_4b_bf16.safetensors
 COPY --link --from=model-download /baked-models/vae/Wan2_1_VAE_fp32.safetensors /ComfyUI/models/vae/Wan2_1_VAE_fp32.safetensors
 COPY --link --from=model-download /baked-models/SEEDVR2/seedvr2_ema_7b_fp16.safetensors /ComfyUI/models/SEEDVR2/seedvr2_ema_7b_fp16.safetensors
 COPY --link --from=model-download /baked-models/SEEDVR2/ema_vae_fp16.safetensors /ComfyUI/models/SEEDVR2/ema_vae_fp16.safetensors
